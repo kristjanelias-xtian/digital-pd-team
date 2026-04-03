@@ -1,0 +1,13 @@
+{
+  "name": "pd-webhook-relay",
+  "version": "1.0.0",
+  "description": "Receives Pipedrive webhooks via Tailscale Funnel and relays to bot Telegram group",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

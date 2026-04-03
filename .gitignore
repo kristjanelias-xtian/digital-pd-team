@@ -1,0 +1,26 @@
+# Secrets — never commit
+webhook-server/.env
+bots/*/auth-profiles.json
+bots/*/openclaw.json
+bots/*/credentials/
+
+# Sensitive reference (contains all tokens in one place)
+docs/pipedrive-ids.md
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# Internal development artifacts (contain secrets in examples)
+docs/superpowers/
+
+# Claude Code
+.claude/
+
+# Office docs (binary, not useful in git)
+*.docx

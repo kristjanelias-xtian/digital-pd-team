@@ -1,0 +1,192 @@
+# Pipedrive
+
+> Pipedrive is a deal-centric, pipeline-first CRM built for B2B sales teams. It is designed around how salespeople actually work: managing a set of commercial opportunities through a staged process, with a focus on the actions that close deals. Pipedrive is opinionated by design — it favors simplicity and a clear deal-driven workflow over generic flexibility.
+
+## Core mental model
+
+The **deal** is the unit of value and the unit of work. Everything else in Pipedrive exists to support deal execution. The **pipeline board** — a visual Kanban of deals moving through stages — is the primary workspace. When working with Pipedrive, always treat the deal as the central anchor.
+
+Pipedrive follows **activity-based selling**: the philosophy that salespeople should focus on the next actions within their control (calls, meetings, follow-ups) rather than obsessing over outcomes. Activities drive deals forward.
+
+This is **not** a general-purpose contact database. Do not treat persons or organizations as the primary organizing axis. They are important context for deals, not independent anchors.
+
+## Core entities
+
+### Deals
+A commercial opportunity with a monetary value, pipeline stage, expected close date, and owner. Deals move through pipeline stages from open to won or lost. They are the anchor for forecasting, pipeline health, and most sales workflows.
+
+A deal links to **one primary person** and **one primary organization**. This constraint is intentional — it keeps reporting, permissions, and the UI predictable.
+
+### Leads
+An unqualified prospect, stored in a separate Leads Inbox — not in the pipeline. Leads exist to prevent the pipeline from being overloaded with unqualified "maybes." A lead converts to a deal when qualified. Leads share the same custom field definitions as deals.
+
+### Persons
+Individual contacts. A person can be associated with an organization. Persons are linked to deals as participants or primary contacts. Email, phone, and communication history attach to persons.
+
+### Organizations
+Company or account records. An organization is the single source of truth for company-level information. Persons belong to organizations. Deals link to organizations for account-level context.
+
+### Activities
+Time-based actions: calls, meetings, tasks, emails, deadlines. Activities are the operational heartbeat of Pipedrive — they represent "what happened" and "what's next." Activities link to deals, leads, persons, and organizations.
+
+**Important limitation:** Activities do not support custom fields. If you need to store structured metadata on an interaction (e.g., call outcome categories, meeting scores), you cannot do so natively on the activity. This is a known constraint.
+
+### Notes
+Unstructured text attached to deals, persons, organizations, or leads. Notes capture context that doesn't fit into structured fields.
+
+### Products
+Items being sold, attached to deals. Products have prices, quantities, and can be linked to multiple deals. Used for quoting and revenue tracking at the line-item level.
+
+### Projects
+Post-sale delivery tracking. Projects extend the deal-centric workflow beyond the close, supporting handoff from sales to delivery or implementation.
+
+## Entity relationships
+
+The relationship pattern is **deal-as-hub**:
+
+```
+Organizations
+    └── Persons
+          └── Deals (primary person + primary organization)
+                ├── Activities
+                ├── Notes  
+                ├── Products (line items)
+                └── Projects (post-sale)
+```
+
+Activities, notes, and products attach primarily to deals and roll up to the linked person and organization. This hub pattern supports pipeline execution, deal-based reporting, and a consistent timeline of interactions on each deal.
+
+**Relationship constraints are intentional.** Pipedrive limits many-to-many relationships to keep the model predictable. A deal has one primary person and one primary organization. A person has one primary organization. These constraints simplify the UI, reporting, and permissions — they are a feature, not a bug, for SMB sales teams.
+
+## Pipelines and stages
+
+A **pipeline** is a sequence of stages that deals move through (e.g., "Qualified → Proposal Sent → Negotiation → Closed Won"). An account can have multiple pipelines for different sales processes.
+
+Each **stage** represents a milestone in the sales process. Stages have an ordering and optional probability percentages for forecasting. Moving a deal between stages is the primary interaction pattern — it reflects real progress in the sales process.
+
+When creating or updating deals, always assign them to a valid pipeline and stage. Do not create deals without a stage.
+
+## Custom fields
+
+Deals, persons, organizations, and products support **custom fields** — additional fields defined per account to capture data specific to a team's workflow (e.g., "Industry," "Lead Source," "Contract Type").
+
+### How custom fields work
+
+Custom field codes are **system-generated 40-character hashes** (e.g., `c4edaffd98369398ebaac0348cdb3f86f5a8eb26`). They are not human-readable. This is different from Salesforce (which uses `FieldName__c`) or HubSpot (which uses `property_name`).
+
+**To discover custom fields and their human-readable names, types, and options, use the field metadata endpoints:**
+
+- `GET /api/v2/dealFields` — custom fields on deals
+- `GET /api/v2/personFields` — custom fields on persons
+- `GET /api/v2/organizationFields` — custom fields on organizations
+- `GET /api/v2/productFields` — custom fields on products
+
+Each field metadata response includes: the hash-based field `key`, a human-readable `name`, the field `type` (varchar, enum, date, monetary, etc.), and for enum fields the list of `options` with their IDs and labels.
+
+**Always look up field definitions before writing to custom fields.** Do not guess or hardcode field hashes — they are unique per account.
+
+### Custom field types
+
+Common types: `varchar` (text), `double` (number), `monetary` (currency amount), `enum` (single select from options), `set` (multi-select), `date`, `daterange`, `time`, `timerange`, `address`, `phone`, `text` (long text), `people` (person reference), `organization` (org reference).
+
+When setting enum or set fields, use the option **ID** (an integer), not the label text.
+
+## Authentication
+
+Pipedrive supports two authentication methods:
+
+### API token
+A per-user token found in Pipedrive settings. Pass it in the `x-api-token` header. Simple to use for scripts and personal automation. The token gives access to everything the user can see.
+
+```
+GET https://{company_domain}.pipedrive.com/api/v2/deals
+x-api-token: {your_api_token}
+```
+
+### OAuth 2.0
+Required for Marketplace apps and multi-user integrations. Supports scoped access (e.g., `deals:full`, `contacts:read`, `activities:full`). Access tokens are passed in the `Authorization: Bearer` header.
+
+Available scopes include: `deals`, `contacts` (persons + organizations), `leads`, `activities`, `products`, `projects`, `mail`, and others — each with `:read` or `:full` access levels.
+
+## API conventions
+
+### Base URL
+```
+https://{company_domain}.pipedrive.com/api/v2/
+```
+The `company_domain` is the subdomain of the Pipedrive account (e.g., `acme` from `acme.pipedrive.com`).
+
+### API versions
+Pipedrive is transitioning from **v1 to v2**. Use v2 endpoints where available — they are faster, have stricter validation, and use cursor-based pagination. Some endpoints are still v1-only. Check the API reference for availability.
+
+Key v2 differences from v1:
+- Timestamps use RFC 3339 format (`2024-01-01T00:00:00Z`)
+- Boolean fields accept only `true`/`false` (not `1`/`0`)
+- Related objects are not embedded in responses — fetch them separately
+- `user_id` is renamed to `owner_id` on most entities
+- `is_active` is renamed to `is_deleted` (with inverted logic)
+
+### Pagination
+- **v2 endpoints** use cursor-based pagination. Responses include a `next_cursor` value to fetch the next page. Default limit: 100, maximum: 500.
+- **v1 endpoints** use offset-based pagination (`start` and `limit` parameters).
+
+### Rate limiting
+Pipedrive uses a **token-based rate limit (TBRL)** system. Each API call costs a certain number of tokens depending on endpoint complexity. Each account has a daily token budget shared across all users and integrations. Higher-tier plans have larger budgets.
+
+Response headers include remaining budget information. When the budget is exhausted, requests return `429 Too Many Requests`. Implement exponential backoff with jitter for retries.
+
+### Error responses
+Errors return JSON with an `error` field describing the problem. Error messages reference field codes, not human-readable names. If you receive an error about an invalid field, use the field metadata endpoints to look up valid field codes.
+
+## Webhooks
+
+Pipedrive supports **webhooks** for event-driven integrations. You can subscribe to events on deals, persons, organizations, activities, and other entities. Events include `added`, `updated`, `deleted`, and `merged`.
+
+Webhooks deliver HTTP POST requests to your endpoint with a JSON payload describing the change. Delivery is best-effort with retries on failure. Webhooks are outbound-only — they notify external systems about changes inside Pipedrive.
+
+## Common patterns
+
+### Creating a deal with full context
+A well-formed deal creation typically involves:
+1. Look up or create the **organization** (`POST /api/v2/organizations`)
+2. Look up or create the **person** linked to that organization (`POST /api/v2/persons`)
+3. Create the **deal** in the correct pipeline and stage, linked to the person and organization (`POST /api/v2/deals`)
+4. Create a follow-up **activity** on the deal (`POST /api/v2/activities`)
+
+Do not create orphan deals without a person, organization, or follow-up activity — this defeats the deal-centric workflow.
+
+### Discovering account configuration
+Before performing complex operations, discover the account's configuration:
+- `GET /api/v2/pipelines` — list all pipelines
+- `GET /api/v2/stages` — list stages within a pipeline
+- `GET /api/v2/dealFields` — list deal custom fields and their options
+- `GET /api/v2/personFields` — list person custom fields
+- `GET /api/v2/organizationFields` — list organization custom fields
+- `GET /api/v2/activityTypes` — list available activity types
+
+### Searching across entities
+- `GET /api/v1/itemSearch` — global search across deals, persons, organizations, products, and leads
+- Entity-specific search endpoints exist for narrower, scoped-access searches (e.g., `GET /api/v2/deals/search`)
+
+### Updating deal stage (advancing the pipeline)
+```
+PATCH /api/v2/deals/{id}
+{ "stage_id": {new_stage_id} }
+```
+Stage IDs are integers specific to the account's pipeline configuration. Always look up valid stages first via `GET /api/v2/stages?pipeline_id={id}`.
+
+## What Pipedrive is not
+
+- **Not a marketing automation platform.** Pipedrive is optimized for sales execution, not marketing funnels, email campaigns, or lead nurturing workflows. Contact journey analytics and multi-touch attribution are not its strength.
+- **Not a generic contact database.** The data model is intentionally constrained around deals. If your use case is purely contact management without commercial opportunities, Pipedrive's opinions will feel restrictive.
+- **Not a project management tool.** Projects exist but are secondary to the deal pipeline. Do not use Pipedrive as a general-purpose task or project tracker.
+
+## Further resources
+
+- [API Reference (v1 and v2)](https://developers.pipedrive.com/docs/api/v1): Full endpoint documentation
+- [API v2 Migration Guide](https://pipedrive.readme.io/docs/pipedrive-api-v2-migration-guide): Differences between v1 and v2
+- [Developer Documentation](https://pipedrive.readme.io/docs/core-api-concepts-about-pipedrive-api): Core concepts, entity relationships, and guides
+- [OAuth 2.0 Guide](https://pipedrive.readme.io/docs/marketplace-oauth-authorization): Authentication setup for apps
+- [Changelog](https://developers.pipedrive.com/changelog): API updates and new endpoints
+- [OpenAPI Specification](https://developers.pipedrive.com/docs/api/v2): Machine-readable API schema (available for both v1 and v2)
+- [Developer Sandbox](https://pipedrive.readme.io/docs/developer-sandbox-account): Request a sandbox account for development and testing
