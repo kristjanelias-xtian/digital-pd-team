@@ -1,3 +1,4 @@
 #!/bin/bash
-# Restore Lux Bot — delegates to shared restore-bot.sh
-exec "$(cd "$(dirname "$0")/../.." && pwd)/restore-bot.sh" "$(dirname "$0")"
+# Restore Lux — delegates to shared openshell-tools
+cd "$(cd "$(dirname "$0")/../.." && pwd)"
+restore-bot.sh "bots/lux"
