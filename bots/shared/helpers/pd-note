@@ -68,6 +68,7 @@ def main() -> None:
         for f in facts:
             no_markdown_tables(f, "fact")
             no_markdown_headers(f, "fact")
+            no_code_fences(f, "fact")
             max_length(f, 140, "fact")
 
         content = build_content(args.summary, facts, args.next_action)
