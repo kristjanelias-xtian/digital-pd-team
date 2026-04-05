@@ -65,7 +65,8 @@ Deals should not be in this stage. It exists for legacy reasons. If you see a de
 **What Taro does:**
 - Schedule contract signing activity.
 - Write a note capturing the final terms.
-- Advance to Contract Signed when signed.
+- Mark the signing activity done when complete.
+- Advance to Contract Signed with `pd-advance-stage`.
 
 ## Stage 17 — Contract Signed (probability 100%)
 
