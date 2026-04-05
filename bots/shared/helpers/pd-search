@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""pd-search — unified ranked search across persons, organizations, leads, deals.
+
+Usage: pd-search <term> [--json]
+
+Returns matching records from all four entity types, one per line:
+    <kind>  <id>  <label>  [extra]
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import non_empty  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Unified Pipedrive search")
+    parser.add_argument("term", nargs="?", help="Search term")
+    parser.add_argument("--json", action="store_true", help="Output structured JSON")
+    args = parser.parse_args()
+
+    try:
+        non_empty(args.term or "", "term")
+    except ValueError as e:
+        error(str(e), hint="Usage: pd-search <term>")
+
+    pd = PDClient()
+    results: list[str] = []
+    try:
+        for person in pd.search_persons(args.term):
+            label = person.get("name", "?")
+            results.append(f"person  {person.get('id')}  {label}")
+        for org in pd.search_organizations(args.term):
+            label = org.get("name", "?")
+            results.append(f"org     {org.get('id')}  {label}")
+        for lead in pd.search_leads(args.term):
+            label = lead.get("title", "?")
+            results.append(f"lead    {lead.get('id')}  {label}")
+        for deal in pd.search_deals(args.term):
+            label = deal.get("title", "?")
+            results.append(f"deal    {deal.get('id')}  {label}")
+    except PDError as e:
+        error(f"search failed: {e}")
+
+    if not results:
+        success("no matches", count=0, results=[])
+    success("\n".join(results), count=len(results), results=results)
+
+
+if __name__ == "__main__":
+    main()
