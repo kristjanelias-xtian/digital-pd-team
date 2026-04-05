@@ -51,6 +51,20 @@ All bots read/write Pipedrive via REST API with individual tokens.
 
 > API tokens, Telegram bot tokens, and other credentials are stored in `docs/pipedrive-ids.md` (gitignored) and each bot's `openclaw.json` (gitignored).
 
+## Documentation map
+
+| I want to… | Read this |
+|---|---|
+| Understand the whole architecture | `docs/architecture.md` |
+| Add a new bot (new role) | `docs/new-bot-checklist.md` |
+| Tune bot behavior (fix format drift, duplicate work, stuck flows) | `docs/iteration-playbook.md` |
+| Demo the team to colleagues | `docs/demo-scenario.md` |
+| Understand what each bot owns | `bots/ROLES.md` |
+| Understand the deal mental model | `bots/shared/pipedrive/mental-model.md` |
+| See the full scoring rubric / stage criteria | `bots/shared/pipedrive/lead-lifecycle.md`, `deal-lifecycle.md` |
+| Recover from a Colima crash | "Colima VM Crash Recovery" section below |
+| Day-to-day operations (restart, backup, deploy skills) | "Operating the Bots" section below |
+
 ## Key Conventions
 
 ### Bot Identity
@@ -69,10 +83,14 @@ All bots read/write Pipedrive via REST API with individual tokens.
 - Lux qualifies leads (scoring 0-100), labels them Hot/Warm/Cold, converts Hot to deals.
 
 ### Webhook Flow
-1. Pipedrive event fires → webhook hits Tailscale Funnel → relay server on port 3000
-2. Relay formats a concise message → DMs Zeno via Telegram (you can mute this chat)
-3. Zeno wakes up, processes the event, posts to the group in natural language
-4. Other bots see group messages and act on their responsibilities
+1. Pipedrive event fires → Tailscale Funnel → `webhook-server` on port 3000
+2. `server.js` normalizes the payload, runs exact dedupe (eventKey+id, 15s), then rollup dedupe (target bot + person_id, 90s), then the `is_bot` creator filter
+3. Looks up `routing.yaml` to find the owning bot (leads/persons/orgs → Lux, deals → Taro with Zeno cc on stage/status/value changes, deletes → Zeno)
+4. Fire-and-forget dispatch to that bot's `/v1/responses` endpoint (10-min inner timeout); server responds 200 to PD in <50ms
+5. Bot processes, calls `pd-*` helpers, posts a line to the group via its final response text (sanitized server-side: strips bold/tables/emoji, truncates to last line if >8 lines)
+6. For Hot leads: Lux calls `POST /trigger` to wake Taro with the handoff payload
+
+Zeno is **not** on the event path. He only sees deal cc's, deletes, and direct group mentions.
 
 ## Directory Structure
 
@@ -83,9 +101,13 @@ digital-pd-team/
 ├── hooks/
 │   └── post-restart.sh
 ├── docs/
-│   ├── nordlight-solar-profile.md
-│   ├── pipedrive-ids.md                   ← PD IDs (gitignored)
-│   └── new-bot-checklist.md               ← New-bot setup runbook
+│   ├── architecture.md                    ← Deep technical reference
+│   ├── iteration-playbook.md              ← Tuning cycle methodology
+│   ├── demo-scenario.md                   ← 10-min team demo runbook
+│   ├── new-bot-checklist.md               ← New-bot setup (10 phases)
+│   ├── nordlight-solar-profile.md         ← Company profile (loaded into bots)
+│   ├── two-ways-to-build-crm-agents.md    ← Essay: this vs. pipeagent
+│   └── pipedrive-ids.md                   ← PD IDs (gitignored)
 ├── bots/
 │   ├── ROLES.md                           ← Role registry (source of truth)
 │   ├── TEMPLATE/                          ← Copy to add a new bot
