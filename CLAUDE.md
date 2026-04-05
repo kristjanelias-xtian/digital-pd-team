@@ -45,9 +45,9 @@ All bots read/write Pipedrive via REST API with individual tokens.
 
 | Bot | Role | Telegram | PD User ID |
 |-----|------|----------|------------|
-| **Zeno Bot** | Sales Director / Router | @zeno_pd_bot | 25475093 |
-| **Lux Bot** | SDR / Lead Qualification | @lux_pd_bot | 25475071 |
-| **Taro Bot** | Account Executive / Closer | @taro_pd_bot | 25475082 |
+| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25475093 |
+| **Lux Bot** | SDR | @lux_pd_bot | 25475071 |
+| **Taro Bot** | Account Executive | @taro_pd_bot | 25475082 |
 
 > API tokens, Telegram bot tokens, and other credentials are stored in `docs/pipedrive-ids.md` (gitignored) and each bot's `openclaw.json` (gitignored).
 
@@ -79,42 +79,60 @@ All bots read/write Pipedrive via REST API with individual tokens.
 ```
 digital-pd-team/
 ├── CLAUDE.md                              ← This file
-├── SETUP.md                               ← Step-by-step setup guide
-├── workspace-files.txt                    ← Extra docs pushed into sandbox workspace
+├── workspace-files.txt
 ├── hooks/
-│   └── post-restart.sh                    ← Post-restart hook: restart webhook server
-├── NordLight_Solar_Company_Profile.docx   ← Source company profile
+│   └── post-restart.sh
 ├── docs/
-│   ├── nordlight-solar-profile.md         ← Company profile (markdown, loaded into bots)
-│   └── pipedrive-ids.md                   ← All PD IDs: users, stages, fields, labels
+│   ├── nordlight-solar-profile.md
+│   ├── pipedrive-ids.md                   ← PD IDs (gitignored)
+│   └── new-bot-checklist.md               ← New-bot setup runbook
 ├── bots/
-│   ├── shared/                            ← Shared skill files pushed to all bots
-│   │   └── pipedrive.md                   ← PD mental model, API conventions
-│   ├── zeno/                              ← Sales Director / Router
-│   │   ├── IDENTITY.md                    ← Config: personality (pushed by restore.sh)
-│   │   ├── openclaw.json                  ← Config: model, channels (gitignored)
-│   │   ├── policy.yaml                    ← Config: network egress rules
-│   │   ├── auth-profiles.json             ← Config: API key refs (gitignored)
-│   │   ├── restore.sh                     ← Thin wrapper → shared restore-bot.sh (on PATH)
-│   │   ├── credentials/                   ← Config: Telegram allowFrom (gitignored)
-│   │   └── skills/
-│   │       └── pipedrive-router/SKILL.md  ← Config: pushed by deploy-skill.sh
-│   ├── lux/                               ← SDR / Lead Qualification
-│   │   ├── (same structure)
-│   │   └── skills/
-│   │       └── pipedrive-sdr/SKILL.md
-│   └── taro/                              ← Account Executive / Closer
-│       ├── (same structure)
-│       └── skills/
-│           └── pipedrive-ae/SKILL.md
-├── backups/                               ← Sandbox state snapshots (gitignored)
-│   └── <bot>/<timestamp>/.openclaw/       ← Full state: workspace, sessions, offsets
+│   ├── ROLES.md                           ← Role registry (source of truth)
+│   ├── TEMPLATE/                          ← Copy to add a new bot
+│   ├── shared/
+│   │   ├── rulebook-base.md               ← Non-negotiables every bot inherits
+│   │   ├── handoffs.md                    ← Handoff protocol
+│   │   ├── pipedrive/                     ← On-demand reference docs
+│   │   │   ├── README.md
+│   │   │   ├── mental-model.md
+│   │   │   ├── notes-guide.md
+│   │   │   ├── lead-lifecycle.md
+│   │   │   ├── deal-lifecycle.md
+│   │   │   ├── custom-fields.md
+│   │   │   ├── account-anchors.md
+│   │   │   └── api-conventions.md
+│   │   └── helpers/                       ← Python pd-* CLIs
+│   │       ├── pd-search
+│   │       ├── pd-find-or-create-person
+│   │       ├── pd-find-or-create-org
+│   │       ├── pd-new-lead
+│   │       ├── pd-new-deal
+│   │       ├── pd-note
+│   │       ├── pd-advance-stage
+│   │       ├── pd-convert-lead
+│   │       ├── lib/
+│   │       └── tests/
+│   ├── lux/
+│   │   ├── IDENTITY.md                    ← Personality only (~20 lines)
+│   │   ├── SKILL.md                       ← Thin role rulebook (~55 lines)
+│   │   ├── openclaw.json
+│   │   ├── policy.yaml
+│   │   ├── auth-profiles.json             (gitignored)
+│   │   ├── restore.sh
+│   │   └── credentials/                   (gitignored)
+│   ├── taro/                              (same shape)
+│   └── zeno/                              (same shape)
+├── backups/                               (gitignored)
 ├── webhook-server/
-│   ├── server.js                          ← Express relay: PD webhook → Zeno DM + trigger relay
+│   ├── server.js                          ← YAML-driven router
+│   ├── router.js
+│   ├── routing.yaml                       ← Event → bot route table
+│   ├── logs/                              (gitignored)
+│   │   └── events-<date>.jsonl
 │   ├── package.json
-│   ├── .env                               ← Tokens (gitignored)
-│   └── .env.example
-└── scripts/                               ← (future automation scripts)
+│   └── .env                               (gitignored)
+└── scripts/
+    └── check-bot-compliance.py            ← Layer-2 diagnostic
 ```
 
 ## Config vs State — The Deployment Model
@@ -126,10 +144,10 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 |------|-------------------|-------------|
 | `openclaw.json` | `~/.openclaw/openclaw.json` | Model, channels, heartbeat, plugins |
 | `IDENTITY.md` | `~/.openclaw/agents/main/agent/IDENTITY.md` | Personality and instructions |
+| `SKILL.md` | `~/.agents/skills/main/SKILL.md` | Role rulebook and capabilities |
 | `auth-profiles.json` | `~/.openclaw/agents/main/agent/auth-profiles.json` | API key references |
 | `policy.yaml` | Set at sandbox creation | Network egress rules |
 | `credentials/` | `~/.openclaw/credentials/` | Telegram allowFrom |
-| `skills/*/SKILL.md` | `~/.agents/skills/*/SKILL.md` | Bot capabilities |
 
 **State (bot creates, never overwrite):**
 | File | Location in sandbox | What it does |
@@ -148,9 +166,8 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 
 | What you want to do | Command | Restarts gateway? | Memory safe? |
 |---|---|---|---|
-| Push a skill change | `deploy-skill.sh taro pipedrive-ae` | No | Yes |
-| Push all skills to one bot | `deploy-skill.sh taro` | No | Yes |
-| Push all skills to all bots | `deploy-skill.sh all` | No | Yes |
+| Push skill change for one bot | `deploy-skill.sh taro` | No | Yes |
+| Push skills for all bots | `deploy-skill.sh all` | No | Yes |
 | Full restore (config change) | `./bots/taro/restore.sh` | Yes | Yes* |
 | Back up full sandbox state | `backup-bot.sh taro` | No | N/A |
 | Restore memory from backup | `restore-state.sh taro` | No | Yes |
@@ -167,10 +184,10 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 
 ```bash
 # 1. Edit the skill locally
-vim bots/taro/skills/pipedrive-ae/SKILL.md
+vim bots/taro/SKILL.md
 
 # 2. Push it (no restart, no memory loss, takes ~2 seconds)
-deploy-skill.sh taro pipedrive-ae
+deploy-skill.sh taro
 
 # 3. Bot picks up the new skill on its next interaction
 ```
@@ -224,9 +241,8 @@ The script uses the admin token, deletes in dependency order, handles batching a
 
 ### Deploy skills (safe — no restart, no memory loss)
 ```bash
-deploy-skill.sh taro                    # Push all skills for taro
-deploy-skill.sh taro pipedrive-ae       # Push only one skill
-deploy-skill.sh all                     # Push all skills for all bots
+deploy-skill.sh taro                    # Push SKILL.md + shared helpers for taro
+deploy-skill.sh all                     # Push SKILL.md + shared for all bots
 ```
 
 ### Back up a bot's full state
@@ -307,6 +323,16 @@ Bots default to passive — only act on direct triggers. Toggle via Telegram gro
 @lux_pd_bot go proactive      ← starts checking for unqualified leads
 ```
 Zeno can also toggle them: "@taro_pd_bot go proactive"
+
+### Webhook routing
+
+Event → bot routing is declared in `webhook-server/routing.yaml`. To add a new routed event type:
+
+1. Hit `GET /events/unrouted?since=7d` to confirm the event is actually flowing.
+2. Add a route to `routing.yaml`.
+3. Restart the webhook server: `kill $(lsof -ti:3000) && cd webhook-server && nohup node server.js > server.log 2>&1 &`.
+
+Zeno is **not** the router. Events go directly to the role that owns them: leads/persons/orgs → Lux, deals → Taro (with Zeno cc'd on stage/status/value changes).
 
 ## Colima VM Crash Recovery
 
