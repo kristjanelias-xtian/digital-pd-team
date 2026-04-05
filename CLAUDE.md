@@ -236,6 +236,19 @@ backup-bot.sh taro ./my-backups         # Custom backup dir
 # Keeps timestamped snapshots, symlinks `latest`
 ```
 
+### Scheduled daily backups
+All running bots (from this repo AND `home-ai`) are backed up daily at 03:00 by
+a launchd agent installed from `openshell-tools/launchd/`. Because the agent
+uses `~/git/home-ai` as its working directory, snapshots for `zeno`, `lux`,
+`taro` land in `~/git/home-ai/backups/<bot>/<timestamp>/` — not in this repo.
+Currently accumulating indefinitely (no pruning). See
+`openshell-tools/README.md` "Scheduled backups" for install, logs, and the
+retention TODO.
+```bash
+launchctl start com.kristjan.backup-all-bots    # trigger a run now
+launchctl list | grep backup-all-bots           # loaded + last exit status
+```
+
 ### Start/Restart a bot (full restore)
 ```bash
 ./bots/zeno/restore.sh    # Creates sandbox if needed, uploads all config, starts gateway
