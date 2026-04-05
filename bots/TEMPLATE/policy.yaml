@@ -1,0 +1,53 @@
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies:
+  anthropic_api:
+    name: anthropic-inference
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        tls: skip
+    binaries:
+      - path: /usr/bin/node
+      - path: /usr/bin/curl
+  telegram_api:
+    name: telegram-bot-api
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        tls: skip
+    binaries:
+      - path: /usr/bin/node
+      - path: /usr/bin/curl
+  pipedrive_api:
+    name: pipedrive-crm-api
+    endpoints:
+      - host: api.pipedrive.com
+        port: 443
+        tls: skip
+    binaries:
+      - path: /usr/bin/node
+      - path: /usr/bin/curl
+  pipedrive_instance:
+    name: pipedrive-instance
+    endpoints:
+      - host: xtian.pipedrive.com
+        port: 443
+        tls: skip
+    binaries:
+      - path: /usr/bin/node
+      - path: /usr/bin/curl
+  webhook_relay:
+    name: webhook-relay-server
+    endpoints:
+      - host: 192.168.5.2
+        port: 3000
+    binaries:
+      - path: /usr/bin/node
+      - path: /usr/bin/curl

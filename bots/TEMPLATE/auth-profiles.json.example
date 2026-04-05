@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "anthropic:default": {
+      "provider": "anthropic",
+      "apiKey": "REPLACE_WITH_ANTHROPIC_KEY"
+    }
+  }
+}
