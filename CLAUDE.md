@@ -2,7 +2,16 @@
 
 A simulated AI sales workforce for Pipedrive, playing out NordLight Solar Solutions' sales operations with three AI bots running in OpenShell sandboxes.
 
-> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `restart-all.sh`) live in the [openshell-tools](~/git/openshell-tools/) repo and are on PATH. Commands are called without `./` prefix.
+> **Related repos** (all three work together on the same Mac Mini, sharing one OpenShell gateway):
+> - `~/git/openshell-tools/` — Shared bash scripts for OpenShell sandbox management (on PATH). See its `CLAUDE.md` for conventions and gotchas.
+> - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
+> - `~/git/digital-pd-team/` — This repo (zeno, lux, taro for Pipedrive).
+>
+> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
+>
+> **Rule — where code belongs**: New scripts for OpenShell infrastructure (sandbox management, gateway recovery, Colima/Docker operations, backup/restore, deployment) must go in `~/git/openshell-tools/`, not in this repo's `scripts/` directory. This repo's `scripts/` is only for project-specific tooling (e.g. Pipedrive data operations). After adding a script to openshell-tools, document it in that repo's `README.md` and reference it in the CLAUDE.md files of both this project and `~/git/home-ai/`.
+>
+> **Rule — shared gateway**: Both this project and `~/git/home-ai/` share a single OpenShell gateway. `restart-all.sh --gateway` and `upgrade-openshell.sh` destroy and recreate the shared gateway, which kills ALL sandboxes from both projects. After such an operation, you must restore bots from BOTH repos (run `restart-all.sh --skip-backup` from the second repo — no `--gateway` flag).
 
 ## Architecture
 
@@ -147,6 +156,8 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 | Restore memory from backup | `restore-state.sh taro` | No | Yes |
 | Restart everything | `restart-all.sh` | Yes | Yes* |
 | Restart everything + gateway | `restart-all.sh --gateway` | Yes (destroys sandboxes) | Yes** |
+| Wipe all PD data | `./scripts/wipe-pipedrive.sh` | No | Yes |
+| Wipe PD data + reset bots | `./scripts/wipe-pipedrive.sh --notify-bots` | No | Yes |
 
 \* Gateway restart is safe — workspace files persist on disk. `restore-bot.sh` (from openshell-tools) auto-backs up before restoring.
 
@@ -191,6 +202,23 @@ restore-state.sh taro              # Restores memory, offsets, sessions from bac
 # All bots + gateway restart:
 restart-all.sh --gateway           # Does everything: backup → destroy → recreate → restore → state
 ```
+
+### Wiping Pipedrive data
+
+To delete all sales data (deals, leads, activities, notes, persons, organizations), use the wipe script — **never delete PD data manually via API or MCP tools**.
+
+```bash
+# Preview what would be deleted
+./scripts/wipe-pipedrive.sh --dry-run
+
+# Wipe everything (prompts for confirmation)
+./scripts/wipe-pipedrive.sh
+
+# Wipe + tell all bots to forget their sales knowledge
+./scripts/wipe-pipedrive.sh --notify-bots
+```
+
+The script uses the admin token, deletes in dependency order, handles batching and rate limits, and loops until the account is clean. Use `--notify-bots` to send a "fresh start" message to all 3 bots via the trigger relay.
 
 ## Operating the Bots
 
@@ -266,6 +294,39 @@ Bots default to passive — only act on direct triggers. Toggle via Telegram gro
 @lux_pd_bot go proactive      ← starts checking for unqualified leads
 ```
 Zeno can also toggle them: "@taro_pd_bot go proactive"
+
+## Colima VM Crash Recovery
+
+The Colima VM (Virtualization.framework on Apple Silicon) can silently die from macOS sleep/wake cycles. When this happens:
+
+- The Lima host agent keeps running as a zombie (stale pid/socket files)
+- Docker socket exists but daemon doesn't respond
+- `openshell gateway start` fails with "Docker daemon is not responding"
+- `colima start` refuses because it thinks the VM is already running
+
+**Diagnosis:** `check-services.sh` detects zombie Colima, stale Docker, and broken SSH tunnels.
+
+**Recovery (OpenShell 0.0.22+):** Try the minimal fix first — OpenShell 0.0.22 added persistent SSH handshake secrets (#488) and sandbox state persistence across stop/start cycles (#739), so the gateway should resume cleanly after a Colima restart:
+
+```bash
+# Step 1: Fix Colima (if VM is zombie)
+colima stop --force && colima start
+
+# Step 2: Start the gateway container (if not running)
+docker start openshell-cluster-openshell   # or: openshell gateway start --name openshell
+
+# Step 3: Verify SSH tunnels with check-services.sh
+check-services.sh
+```
+
+**Recovery (fallback — if SSH tunnels are still broken):** Pre-0.0.22 behavior was that k3s TLS secrets became stale and required a full gateway destroy/recreate. If the minimal fix doesn't work on your version, fall back to:
+
+```bash
+# Backups will fail if SSH is broken — use --skip-backup with existing backups
+restart-all.sh --gateway --skip-backup
+# or, to also upgrade OpenShell:
+upgrade-openshell.sh --skip-backup
+```
 
 ## Gotchas & Learnings
 
