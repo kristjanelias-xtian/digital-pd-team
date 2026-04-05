@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""pd-advance-stage — move a deal to a new stage with side-effects.
+
+Enforces:
+- Target stage is legal (forward-only in the NordLight pipeline, or final Lost).
+- A reason is provided (goes into an automatic note).
+- Closes any open activity on the deal before advancing.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import non_empty  # noqa: E402
+
+STAGES = {
+    "New Lead": (11, 0),
+    "Qualified": (12, 1),
+    "Site Visit Scheduled": (13, 2),
+    "Proposal Sent": (14, 3),
+    "Negotiation": (15, 4),
+    "Verbal Agreement": (16, 5),
+    "Contract Signed": (17, 6),
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--deal-id", type=int, required=True, dest="deal_id")
+    parser.add_argument("--to", required=True)
+    parser.add_argument("--reason", required=False)
+    parser.add_argument("--lost", action="store_true", help="Mark as lost instead of advancing")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        non_empty(args.reason or "", "--reason")
+    except ValueError as e:
+        error(str(e), hint="Every stage change needs a reason — one line, honest")
+
+    pd = PDClient()
+
+    if args.lost:
+        try:
+            pd.put(f"/deals/{args.deal_id}", {"status": "lost", "lost_reason": args.reason})
+            pd.post("/notes", {"deal_id": args.deal_id, "content": f"Lost: {args.reason}"})
+        except PDError as e:
+            error(str(e))
+        success(f"deal_id={args.deal_id} marked lost", deal_id=args.deal_id, status="lost")
+
+    if args.to not in STAGES:
+        error(f"unknown stage: {args.to}", hint=f"valid stages: {', '.join(STAGES.keys())}")
+
+    try:
+        current = pd.get(f"/deals/{args.deal_id}")["data"]
+        current_stage_id = current["stage_id"]
+        current_order = next((o for (sid, o) in STAGES.values() if sid == current_stage_id), -1)
+        target_stage_id, target_order = STAGES[args.to]
+        if target_order <= current_order:
+            error(
+                f"illegal transition: cannot move backward from stage {current_stage_id} to {target_stage_id}",
+                hint="Use --lost to mark a deal lost",
+            )
+
+        # Close any open activities on the deal
+        acts = pd.get(f"/deals/{args.deal_id}/activities").get("data") or []
+        for a in acts:
+            if not a.get("done"):
+                pd.put(f"/activities/{a['id']}", {"done": 1})
+
+        # Advance stage
+        pd.put(f"/deals/{args.deal_id}", {"stage_id": target_stage_id})
+
+        # Write the reason as a note
+        pd.post("/notes", {
+            "deal_id": args.deal_id,
+            "content": f"Stage → {args.to}: {args.reason}",
+        })
+    except PDError as e:
+        error(str(e))
+
+    success(
+        f"deal_id={args.deal_id} → stage={target_stage_id} ({args.to})",
+        deal_id=args.deal_id,
+        stage_id=target_stage_id,
+        stage_name=args.to,
+    )
+
+
+if __name__ == "__main__":
+    main()
