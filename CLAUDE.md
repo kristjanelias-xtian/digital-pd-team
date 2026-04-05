@@ -2,6 +2,31 @@
 
 A simulated AI sales workforce for Pipedrive, playing out NordLight Solar Solutions' sales operations with three AI bots running in OpenShell sandboxes.
 
+## ⚠ Outstanding work — Task 25 (24-hour Layer-2 compliance check)
+
+The 2026-04-05 bot redesign (branch `refactor/pd-bots-redesign`, now merged to main) completed Phases A and B and the Phase C doc work, but Task 25 — the 24-hour real-data compliance observation — was **deferred** because it requires wall-clock time the tuning session could not spend. This needs to be run before the redesign is fully signed off.
+
+**What to do (runbook):**
+
+1. Enable Lux's proactive mode via Telegram DM:
+   ```
+   go proactive
+   ```
+   She will start auto-qualifying leads on her 20-minute heartbeat.
+2. Let the team run for **24 hours**. Taro picks up any conversions; Zeno observes.
+3. Run the compliance diagnostic:
+   ```bash
+   TOKEN=$(grep "Joonas (Admin)" docs/pipedrive-ids.md | head -1 | awk -F'|' '{print $3}' | tr -d ' \n\r\t')
+   PD_ADMIN_TOKEN=$TOKEN ./scripts/check-bot-compliance.py --hours 24
+   ```
+4. **Pass thresholds:** note hygiene ≥ 95%, deal well-formedness 100%, lane violations 0, group message hygiene ≥ 95%. Exit code 0 = pass, 1 = fail.
+5. **If FAIL:** the script prints which bot + which violation category. Tune via `docs/iteration-playbook.md` and re-run.
+6. **If PASS:** the redesign is complete. Archive the branch pointer, nothing more to do.
+
+**Context and known drift to expect:** see the session memory at `~/.claude/projects/-Users-kristjanelias-git-digital-pd-team/memory/project_task_25_deferred_tuning.md` — it lists the observed LLM drift categories from tuning iterations (scoring non-determinism, occasional verbose Taro messages) and the structural guardrails that should catch them (server-side sanitizer in `webhook-server/server.js`, race guard in `pd-convert-lead`, rollup dedupe in the webhook router).
+
+Remove this section once Task 25 is verified passing.
+
 > **Related repos** (all three work together on the same Mac Mini, sharing one OpenShell gateway):
 > - `~/git/openshell-tools/` — Shared bash scripts for OpenShell sandbox management (on PATH). See its `CLAUDE.md` for conventions and gotchas.
 > - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
