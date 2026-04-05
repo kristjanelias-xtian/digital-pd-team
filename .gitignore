@@ -32,3 +32,6 @@ __pycache__/
 
 # Office docs (binary, not useful in git)
 *.docx
+
+# Webhook event logs (auto-rotated daily JSONL — keep .gitkeep, not logs)
+webhook-server/logs/*.jsonl

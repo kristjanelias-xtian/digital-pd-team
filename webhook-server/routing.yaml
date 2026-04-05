@@ -1,0 +1,38 @@
+# Pipedrive event → bot routing table.
+# This file is the source of truth for webhook routing.
+# Editing this file + restarting the webhook server is all it takes
+# to change routing behavior — no code changes needed.
+
+routes:
+  - event: added.lead
+    to: lux
+    reason: "SDR owns the inbox"
+
+  - event: updated.lead
+    to: lux
+
+  - event: added.person
+    to: lux
+    skip_if_bot_creator: true
+
+  - event: added.organization
+    to: lux
+    skip_if_bot_creator: true
+
+  - event: added.deal
+    to: taro
+    skip_if_bot_creator: true
+
+  - event: updated.deal
+    to: taro
+    cc: zeno
+    only_on_change:
+      - stage_id
+      - status
+      - value
+
+  - event: deleted.deal
+    to: zeno
+
+  - event: deleted.lead
+    to: zeno
