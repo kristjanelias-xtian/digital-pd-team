@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "pipedrive": {
-      "type": "url",
-      "url": "https://mcp.pipedrive.ai/mcp"
-    }
-  }
-}

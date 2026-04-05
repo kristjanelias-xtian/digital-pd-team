@@ -7,6 +7,9 @@ bots/*/credentials/
 # Sensitive reference (contains all tokens in one place)
 docs/pipedrive-ids.md
 
+# Bot state backups (contain sessions, credentials, etc.)
+backups/
+
 # Logs
 *.log
 
