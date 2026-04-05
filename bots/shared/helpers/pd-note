@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""pd-note — write a well-formatted Pipedrive note.
+
+Enforces: summary ≤140 chars, ≤6 facts, no markdown tables/headers/code
+fences, total rendered output ≤12 lines.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import (  # noqa: E402
+    max_items,
+    max_length,
+    max_rendered_lines,
+    no_code_fences,
+    no_markdown_headers,
+    no_markdown_tables,
+    non_empty,
+)
+
+ATTACH_PARAM = {
+    "deal": "deal_id",
+    "lead": "lead_id",
+    "person": "person_id",
+    "org": "org_id",
+    "organization": "org_id",
+}
+
+
+def build_content(summary: str, facts: list[str], next_action: str) -> str:
+    lines = [summary.strip(), ""]
+    for f in facts:
+        lines.append(f"• {f.strip()}")
+    if facts:
+        lines.append("")
+    lines.append(f"Next: {next_action.strip()}")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--on", required=True, choices=list(ATTACH_PARAM.keys()))
+    parser.add_argument("--id", type=int, required=True)
+    parser.add_argument("--summary", required=True)
+    parser.add_argument("--facts", default="", help="Semicolon-separated list of facts")
+    parser.add_argument("--next-action", dest="next_action", required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        non_empty(args.summary, "--summary")
+        max_length(args.summary, 140, "--summary")
+        non_empty(args.next_action, "--next-action")
+        max_length(args.next_action, 200, "--next-action")
+
+        for field in (args.summary, args.next_action):
+            no_markdown_tables(field, "note field")
+            no_markdown_headers(field, "note field")
+            no_code_fences(field, "note field")
+
+        facts = [f.strip() for f in args.facts.split(";") if f.strip()] if args.facts else []
+        max_items(facts, 6, "--facts")
+        for f in facts:
+            no_markdown_tables(f, "fact")
+            no_markdown_headers(f, "fact")
+            no_code_fences(f, "fact")
+            max_length(f, 140, "fact")
+
+        content = build_content(args.summary, facts, args.next_action)
+        max_rendered_lines(content, 12, "rendered note")
+    except ValueError as e:
+        error(str(e), hint="See /sandbox/.agents/skills/shared/pipedrive/notes-guide.md")
+
+    pd = PDClient()
+    body = {"content": content, ATTACH_PARAM[args.on]: args.id}
+    try:
+        resp = pd.post("/notes", body)
+    except PDError as e:
+        error(str(e))
+    note_id = resp["data"]["id"]
+    lines_written = content.count("\n") + 1
+    success(
+        f"note_id={note_id} (written, {lines_written} lines)",
+        id=note_id,
+        lines=lines_written,
+    )
+
+
+if __name__ == "__main__":
+    main()

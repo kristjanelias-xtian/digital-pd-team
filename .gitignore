@@ -3,6 +3,8 @@ webhook-server/.env
 bots/*/auth-profiles.json
 bots/*/openclaw.json
 bots/*/credentials/
+# TEMPLATE openclaw.json has only placeholders, no secrets — commit it
+!bots/TEMPLATE/openclaw.json
 
 # Sensitive reference (contains all tokens in one place)
 docs/pipedrive-ids.md
@@ -25,5 +27,13 @@ docs/superpowers/
 # Claude Code
 .claude/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # Office docs (binary, not useful in git)
 *.docx
+
+# Webhook event logs (auto-rotated daily JSONL — keep .gitkeep, not logs)
+webhook-server/logs/*.jsonl

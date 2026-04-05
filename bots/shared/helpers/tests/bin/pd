@@ -1,0 +1,27 @@
+#!/bin/bash
+# Host-side test shim. Forwards to the real Pipedrive API using the
+# admin token from PD_ADMIN_TOKEN env var. Matches the signature of the
+# in-sandbox /sandbox/bin/pd script.
+set -e
+METHOD="${1:-GET}"
+ENDPOINT="$2"
+BODY="$3"
+if [ -z "$ENDPOINT" ]; then
+  echo "Usage: pd <METHOD> <endpoint> [json-body]" >&2
+  exit 1
+fi
+if [ -z "$PD_ADMIN_TOKEN" ]; then
+  echo "PD_ADMIN_TOKEN not set — tests require admin token" >&2
+  exit 1
+fi
+BASE="https://api.pipedrive.com/v1"
+if echo "$ENDPOINT" | grep -q '?'; then
+  URL="${BASE}${ENDPOINT}&api_token=${PD_ADMIN_TOKEN}"
+else
+  URL="${BASE}${ENDPOINT}?api_token=${PD_ADMIN_TOKEN}"
+fi
+if [ -n "$BODY" ]; then
+  curl -s -X "$METHOD" "$URL" -H "Content-Type: application/json" -d "$BODY"
+else
+  curl -s -X "$METHOD" "$URL"
+fi

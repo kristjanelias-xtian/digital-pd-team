@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""pd-convert-lead — Hot lead → deal atomically, archives the lead.
+
+Refuses non-Hot leads. Uses the lead's existing person/org linkage to
+create a well-formed deal (via the same logic as pd-new-deal) and then
+archives the original lead record.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+
+# If a deal for this person was created within this window, we treat the
+# current invocation as a concurrent duplicate (parallel session race) and
+# refuse rather than create a second deal.
+RACE_WINDOW_SECONDS = 300
+
+PIPELINE_ID = 3
+STAGES = {
+    "Qualified": 12,
+    "Site Visit Scheduled": 13,
+}
+HOT_LABEL = "43b6da41-0a3f-49b3-8024-c09fd2708d02"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lead-id", required=True, dest="lead_id")
+    parser.add_argument("--stage", default="Qualified", choices=list(STAGES.keys()))
+    parser.add_argument("--value", type=float, default=None)
+    parser.add_argument("--currency", default="EUR")
+    parser.add_argument("--follow-up-days", type=int, default=3, dest="follow_up_days")
+    parser.add_argument("--residential", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    pd = PDClient()
+    try:
+        lead = pd.get(f"/leads/{args.lead_id}")["data"]
+    except PDError as e:
+        error(f"could not fetch lead: {e}")
+
+    # Idempotency guard: an archived lead has already been converted. Refuse
+    # rather than create a second deal. Returning an error (non-zero exit) is
+    # the clearest signal to an LLM caller that no new deal was created.
+    if lead.get("is_archived"):
+        error(
+            f"lead {args.lead_id} is already archived — it was previously converted",
+            hint="Do not retry pd-convert-lead. Search the deals pipeline for the existing deal via pd-search.",
+        )
+
+    # Race-condition guard: two parallel sessions can both see is_archived=False
+    # and both run pd-convert-lead, creating duplicate deals. Before proceeding,
+    # check whether the same person already has a deal created in the last few
+    # minutes. If yes, bail — the other session is handling (or has handled) it.
+    person_id_check = lead.get("person_id")
+    if person_id_check:
+        try:
+            existing = pd.get(f"/persons/{person_id_check}/deals?status=all_not_deleted").get("data") or []
+        except PDError:
+            existing = []
+        now = datetime.now(timezone.utc)
+        recent = []
+        for d in existing:
+            add_time_str = d.get("add_time")
+            if not add_time_str:
+                continue
+            try:
+                add_time = datetime.fromisoformat(add_time_str.replace(" ", "T") + "+00:00")
+            except Exception:
+                continue
+            if (now - add_time).total_seconds() <= RACE_WINDOW_SECONDS:
+                recent.append(d)
+        if recent:
+            deal = recent[0]
+            error(
+                f"person {person_id_check} already has a recent deal #{deal['id']} ({deal.get('title','?')}) — a parallel session beat us to it",
+                hint="Do not retry. The other session owns this conversion. Post your acknowledgment and stop.",
+            )
+
+    label_ids = lead.get("label_ids") or []
+    if HOT_LABEL not in label_ids:
+        error(
+            "lead is not labeled Hot — only Hot leads can be converted",
+            hint="Score the lead first via pd-note and label it Hot, or use pd-advance-stage on an existing deal",
+        )
+
+    person_id = lead.get("person_id")
+    org_id = lead.get("organization_id")
+    title = lead.get("title")
+
+    if person_id is None:
+        error("lead has no linked person — cannot convert")
+    if not args.residential and org_id is None:
+        error("commercial conversion requires an organization on the lead (or pass --residential)")
+
+    due = (date.today() + timedelta(days=args.follow_up_days)).isoformat()
+
+    try:
+        deal_body: dict = {
+            "title": title,
+            "person_id": person_id,
+            "pipeline_id": PIPELINE_ID,
+            "stage_id": STAGES[args.stage],
+        }
+        if org_id:
+            deal_body["org_id"] = org_id
+        if args.value is not None:
+            deal_body["value"] = args.value
+            deal_body["currency"] = args.currency
+        elif lead.get("value") and lead["value"].get("amount"):
+            deal_body["value"] = lead["value"]["amount"]
+            deal_body["currency"] = lead["value"].get("currency", "EUR")
+
+        deal_resp = pd.post("/deals", deal_body)
+        deal_id = deal_resp["data"]["id"]
+
+        act_body = {
+            "subject": "Follow-up on converted lead",
+            "type": "task",
+            "due_date": due,
+            "deal_id": deal_id,
+            "person_id": person_id,
+        }
+        if org_id:
+            act_body["org_id"] = org_id
+        act_resp = pd.post("/activities", act_body)
+        activity_id = act_resp["data"]["id"]
+
+        # Archive the lead
+        pd.patch(f"/leads/{args.lead_id}", {"is_archived": True})
+    except PDError as e:
+        error(str(e))
+
+    success(
+        f"deal_id={deal_id}, activity_id={activity_id} (converted from lead {args.lead_id})",
+        deal_id=deal_id,
+        activity_id=activity_id,
+        lead_id=args.lead_id,
+    )
+
+
+if __name__ == "__main__":
+    main()

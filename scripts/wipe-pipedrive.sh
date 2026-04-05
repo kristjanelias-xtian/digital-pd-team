@@ -77,6 +77,8 @@ api_delete_bulk() {
 wipe_entity() {
   local entity="$1"        # e.g., "deals", "persons", "organizations"
   local display="$2"       # e.g., "Deals", "People", "Organizations"
+  local display_lower       # bash 3.2 on macOS lacks ${var,,}
+  display_lower=$(echo "$display" | tr '[:upper:]' '[:lower:]')
   local bulk_support="$3"  # "bulk" or "single"
 
   echo ""
@@ -114,7 +116,7 @@ print('\n'.join(str(item['id']) for item in items if item and 'id' in item))
     count=$(echo "$ids" | wc -l | tr -d ' ')
 
     if $DRY_RUN; then
-      echo "  Would delete ${count} ${display,,}"
+      echo "  Would delete ${count} ${display_lower}"
       total_deleted=$((total_deleted + count))
       # In dry-run, check if there are more pages
       local more
@@ -134,7 +136,7 @@ print('yes' if info.get('more_items_in_collection') else 'no')
       # Bulk delete (up to 100 IDs comma-separated)
       local id_list
       id_list=$(echo "$ids" | tr '\n' ',' | sed 's/,$//')
-      echo "  Deleting ${count} ${display,,} in bulk..."
+      echo "  Deleting ${count} ${display_lower} in bulk..."
       api_delete_bulk "/${entity}" "$id_list" > /dev/null
       total_deleted=$((total_deleted + count))
     else
@@ -149,11 +151,11 @@ print('yes' if info.get('more_items_in_collection') else 'no')
     fi
 
     sleep_ms "$RATE_LIMIT_MS"
-    echo "  Progress: ${total_deleted} ${display,,} deleted so far..."
+    echo "  Progress: ${total_deleted} ${display_lower} deleted so far..."
   done
 
   if [ "$total_deleted" -gt 0 ]; then
-    echo "  ✓ ${total_deleted} ${display,,} ${DRY_RUN:+would be }deleted"
+    echo "  ✓ ${total_deleted} ${display_lower} ${DRY_RUN:+would be }deleted"
   else
     echo "  (none found)"
   fi

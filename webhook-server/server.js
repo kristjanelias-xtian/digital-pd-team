@@ -14,16 +14,16 @@ try {
       if (!process.env[key]) process.env[key] = val;
     }
   }
-} catch (e) { /* no .env file, rely on environment */ }
+} catch (e) { /* no .env file */ }
 
 const express = require('express');
-const app = express();
+const { spawn } = require('child_process');
+const { loadRouting, resolveRoute, appendEventLog, readRecentEvents } = require('./router');
 
-// --- Configuration ---
+const app = express();
 const PORT = process.env.PORT || 3000;
-const ZENO_TELEGRAM_BOT_TOKEN = process.env.ZENO_TELEGRAM_BOT_TOKEN;
-const ZENO_DM_CHAT_ID = process.env.ZENO_DM_CHAT_ID;
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
+const LOG_DIR = resolve(__dirname, 'logs');
 
 const BOTS = {
   zeno: { port: parseInt(process.env.ZENO_GATEWAY_PORT) || 18801 },
@@ -31,115 +31,149 @@ const BOTS = {
   taro: { port: parseInt(process.env.TARO_GATEWAY_PORT) || 18803 },
 };
 
-// Bot user IDs in Pipedrive — events from these users are bot-generated, not external
-const BOT_USER_IDS = new Set([25475093, 25475071, 25475082]); // Zeno, Lux, Taro
+// PD user IDs for loop prevention — events created by these users are bot-generated.
+// Stored as strings because Pipedrive serializes user_id as a string in webhook payloads;
+// comparing with numeric IDs silently missed every bot-creator check.
+const BOT_USER_IDS = new Set(['25475093', '25475071', '25475082']); // Zeno, Lux, Taro
 
-// --- Event debouncing ---
-// Batch PD events over a window before triggering Zeno (reduces LLM calls by ~70%)
-const DEBOUNCE_MS = parseInt(process.env.DEBOUNCE_MS) || 30_000; // 30 seconds
-let pendingEvents = [];
-let debounceTimer = null;
+const BOT_TOKENS = {
+  zeno: process.env.ZENO_TELEGRAM_BOT_TOKEN,
+  lux:  process.env.LUX_TELEGRAM_BOT_TOKEN,
+  taro: process.env.TARO_TELEGRAM_BOT_TOKEN,
+};
+
+const routing = loadRouting(resolve(__dirname, 'routing.yaml'));
+console.log(`Loaded ${routing.routes.length} routes from routing.yaml`);
+
+// --- Webhook deduplication
+// Two layers:
+//
+// 1. EXACT dedupe on (eventKey + entity_id): catches PD's habit of re-firing
+//    the same webhook for a single entity create (~15s apart). Short window.
+//
+// 2. ROLLUP dedupe on (target_bot + rollup_key): when a user creates a person
+//    and a lead together, PD fires added.person AND added.lead within ~250ms.
+//    Both get routed to the same bot, spawning parallel cold sessions that
+//    race each other and produce duplicate group messages, duplicate notes,
+//    and duplicate deals. The rollup key is the *subject of the action* — for
+//    person/lead/deal events it's the person_id (if we can extract it). If
+//    the same bot got a rollup-key trigger within 90s, skip.
+const DEDUP_WINDOW_MS = 15_000;
+const ROLLUP_WINDOW_MS = 90_000;
+const recentEvents = new Map();   // `${eventKey}:${id}` → ts(ms)
+const recentRollups = new Map();  // `${bot}:${rollup_key}` → ts(ms)
+
+function isDuplicate(eventKey, entityId) {
+  if (!entityId) return false;
+  const key = `${eventKey}:${entityId}`;
+  const now = Date.now();
+  const prev = recentEvents.get(key);
+  if (prev && now - prev < DEDUP_WINDOW_MS) return true;
+  recentEvents.set(key, now);
+  return false;
+}
+
+// Compute a rollup key for an event — the underlying "subject" that parallel
+// webhook events for the same action can share. Returns null if we can't
+// extract one, meaning the event will NOT be rollup-deduped.
+function computeRollupKey(normalized) {
+  const d = normalized.data || {};
+  const obj = normalized.object;
+  if (obj === 'person') return `person:${d.id}`;
+  if (obj === 'organization') return `org:${d.id}`;
+  if (obj === 'lead') {
+    // Lead events roll up to the linked person if we have one, otherwise the lead itself.
+    if (d.person_id) return `person:${d.person_id}`;
+    return `lead:${d.id}`;
+  }
+  if (obj === 'deal') {
+    if (d.person_id) return `person:${d.person_id}`;
+    return `deal:${d.id}`;
+  }
+  return null;
+}
+
+function isRolledUp(botName, rollupKey) {
+  if (!rollupKey) return false;
+  const key = `${botName}:${rollupKey}`;
+  const now = Date.now();
+  const prev = recentRollups.get(key);
+  if (prev && now - prev < ROLLUP_WINDOW_MS) return true;
+  recentRollups.set(key, now);
+  return false;
+}
+
+// Prune stale entries every minute to keep the maps bounded
+setInterval(() => {
+  const cutoffExact = Date.now() - DEDUP_WINDOW_MS;
+  const cutoffRollup = Date.now() - ROLLUP_WINDOW_MS;
+  for (const [k, ts] of recentEvents) if (ts < cutoffExact) recentEvents.delete(k);
+  for (const [k, ts] of recentRollups) if (ts < cutoffRollup) recentRollups.delete(k);
+}, 60_000).unref();
 
 app.use(express.json({ limit: '1mb' }));
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'pd-webhook-relay' });
-});
+// --- Health
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'pd-webhook-relay' }));
 
-// --- Pipedrive Webhook Receiver ---
-// Events are debounced, filtered, and batched before triggering Zeno.
-// This reduces LLM calls dramatically — multiple PD changes become one Zeno wake-up.
-
-// High-value events that warrant triggering Zeno
-const TRIGGER_EVENTS = new Set([
-  'added.deal', 'added.lead', 'added.person', 'added.organization',
-  'updated.deal', 'updated.lead',   // stage changes, status changes, value changes
-  'deleted.deal', 'deleted.lead',
-]);
-
-app.post('/pd-webhook', async (req, res) => {
-  const payload = req.body;
-  const normalized = normalizePayload(payload);
-  const eventKey = `${normalized.action}.${normalized.object}`;
-
-  // Check if this event was created by one of our bots (loop prevention)
-  const creatorId = payload.meta?.user_id || payload.data?.creator_user_id || payload.data?.user_id;
-  const isBotEvent = BOT_USER_IDS.has(creatorId);
-
-  console.log(`[${new Date().toISOString()}] ${eventKey} — ${normalized.label}${isBotEvent ? ' (bot)' : ''}`);
-
-  // Bot-generated events: log only
-  if (isBotEvent) {
-    return res.status(200).json({ received: true, skipped: 'bot-generated' });
+// --- Normalize PD webhook payload
+function normalizePayload(payload) {
+  if (payload.meta && payload.data) {
+    const actionMap = { create: 'added', update: 'updated', change: 'updated', delete: 'deleted', merge: 'merged' };
+    const action = actionMap[payload.meta.action] || payload.meta.action;
+    const object = payload.meta.entity || payload.meta.object;
+    const data = payload.data;
+    const previous = payload.previous || null;
+    const label = data.title || data.name || data.subject || 'unknown';
+    return { action, object, data, previous, label };
   }
-
-  // Low-value events (activity updates, org changes, etc.): log only
-  if (!TRIGGER_EVENTS.has(eventKey)) {
-    console.log(`  → Logged (not a trigger event)`);
-    return res.status(200).json({ received: true, logged: true });
+  if (payload.event) {
+    const [action, object] = payload.event.split('.');
+    return { action, object, data: payload.current || {}, previous: payload.previous || null, label: (payload.current || {}).title || 'unknown' };
   }
+  return { action: 'unknown', object: 'unknown', data: payload, previous: null, label: 'unknown' };
+}
 
-  // Format and add to batch
-  const message = formatForZeno(normalized);
-  if (!message) {
-    return res.status(200).json({ received: true });
+// --- Dispatch to a bot's gateway (fire-and-forget)
+// The bot's full pipeline (read → score → act → post) can easily take 2-5
+// minutes of wall time. Blocking the webhook handler that long causes PD to
+// think delivery failed and re-fire the webhook, which is why we saw the
+// dedupe storm. Instead: return immediately from /pd-webhook and let the
+// dispatch run in the background. The bot's final text output is posted to
+// the group whenever it actually completes.
+function dispatchToBot(botName, message) {
+  const bot = BOTS[botName];
+  if (!bot || !GATEWAY_TOKEN) {
+    console.error(`  → dispatch(${botName}) skipped: bot or gateway not configured`);
+    return;
   }
-
-  pendingEvents.push(message);
-  console.log(`  → Queued (${pendingEvents.length} pending, flushing in ${DEBOUNCE_MS / 1000}s)`);
-
-  // Reset debounce timer
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(flushEvents, DEBOUNCE_MS);
-
-  res.status(200).json({ received: true, queued: true });
-});
-
-// --- Flush batched events to Zeno ---
-async function flushEvents() {
-  debounceTimer = null;
-  if (pendingEvents.length === 0) return;
-
-  const events = pendingEvents.splice(0);
-  const batchMessage = events.length === 1
-    ? events[0]
-    : `${events.length} Pipedrive events:\n${events.map((e, i) => `${i + 1}. ${e}`).join('\n')}`;
-
-  console.log(`[${new Date().toISOString()}] Flushing ${events.length} event(s) to Zeno`);
-
-  // DM Kristjan
-  try {
-    await dmZeno(batchMessage);
-  } catch (err) {
-    console.error(`  → DM failed: ${err.message}`);
-  }
-
-  // Trigger Zeno
-  const zenoBot = BOTS['zeno'];
-  if (!GATEWAY_TOKEN || !zenoBot) return;
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${zenoBot.port}/v1/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-      },
-      body: JSON.stringify({
-        model: 'openclaw',
-        input: `[Pipedrive webhook] ${batchMessage}`,
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.error(`  → Zeno gateway error: ${response.status} — ${body}`);
-      return;
+  // Fire-and-forget: no await, errors logged but don't propagate
+  (async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${bot.port}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        },
+        body: JSON.stringify({ model: 'openclaw', input: message }),
+        signal: AbortSignal.timeout(600_000), // 10 minutes
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        console.error(`  → dispatch(${botName}) gateway ${response.status}: ${body}`);
+        return;
+      }
+      await postResponseToGroup(response, botName);
+    } catch (err) {
+      console.error(`  → dispatch(${botName}) failed: ${err.message}`);
     }
+  })();
+}
 
-    // Post Zeno's response to the group
+// --- Extract bot response text and post to the group
+async function postResponseToGroup(response, botName) {
+  try {
     const data = await response.json();
     let output = null;
     if (Array.isArray(data.output)) {
@@ -155,328 +189,231 @@ async function flushEvents() {
     } else if (typeof data.output === 'string') {
       output = data.output;
     }
+    if (!output) output = data.choices?.[0]?.message?.content || null;
+
+    // Filter out null-response sentinel text that openclaw sometimes returns.
+    // These are diagnostic placeholders, not something to broadcast to the group.
+    if (output) {
+      const trimmed = output.trim();
+      const SENTINELS = [
+        'No response from OpenClaw.',
+        'No response from OpenClaw',
+      ];
+      if (SENTINELS.includes(trimmed) || trimmed.length === 0) output = null;
+    }
+
+    // Server-side enforcement of THE HARD LIMIT (rulebook rule 0): group
+    // messages must be ≤ 8 lines, plain prose, no emoji/bold/markdown tables.
+    // The rulebook tells bots this, but LLMs drift on verbose reasoning
+    // sessions. If the bot produces a compliant summary line at the end of a
+    // wall of thinking, we keep only that line.
+    if (output) {
+      // Strip bold markers, markdown headers (inline), and table pipes.
+      let cleaned = output
+        .replace(/\*\*(.+?)\*\*/g, '$1')          // **bold** → bold
+        .replace(/^#{1,6}\s+/gm, '')              // # headers → plain
+        .replace(/^\s*\|.*\|\s*$/gm, '')          // table rows → empty
+        .replace(/^\s*\|[-: ]+\|\s*$/gm, '')      // table dividers → empty
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}]/gu, '') // emoji
+        .replace(/\n{3,}/g, '\n\n');              // collapse runs of blank lines
+      const lines = cleaned.split('\n');
+      const nonEmpty = lines.filter((l) => l.trim().length > 0);
+      if (nonEmpty.length > 8) {
+        // Too long — keep only the last non-empty line as the message.
+        // This is where Lux/Taro naturally put their summary sentence.
+        cleaned = nonEmpty[nonEmpty.length - 1];
+        console.log(`  → [${botName}] truncated ${nonEmpty.length}-line output to last line`);
+      }
+      output = cleaned.trim();
+      if (output.length === 0) output = null;
+    }
 
     if (output && output.length > 0) {
       const text = output.length > 4000 ? output.slice(0, 4000) + '...' : output;
-      const zenoToken = process.env.ZENO_TELEGRAM_BOT_TOKEN;
-      if (zenoToken) {
-        await fetch(`https://api.telegram.org/bot${zenoToken}/sendMessage`, {
+      const token = BOT_TOKENS[botName];
+      if (token) {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text }),
         });
-        console.log(`  → Zeno posted to group`);
+        // Log the group message for Layer 2 compliance analysis
+        appendEventLog(LOG_DIR, {
+          ts: new Date().toISOString(),
+          kind: 'group_message',
+          bot: botName,
+          text,
+          lines: text.split('\n').length,
+        });
       }
     }
-    console.log(`  → Zeno processed ${events.length} event(s)`);
-  } catch (err) {
-    console.error(`  → Zeno trigger failed: ${err.message}`);
+  } catch (e) {
+    console.error(`  → postResponseToGroup(${botName}) failed: ${e.message}`);
   }
 }
 
-// --- Bot-to-Bot Trigger Relay ---
-// Bots can't see each other's Telegram messages (platform restriction).
-// This endpoint delivers messages via the OpenClaw gateway HTTP API.
-//
-// Two modes:
-//   ?async=true  — fire-and-forget, returns immediately (for when caller doesn't need to wait)
-//   default      — waits for gateway to accept the message, returns real delivery status
-//
-// The gateway /v1/responses runs the full agent (LLM + tools) which can take 60s+.
-// We wait only for the HTTP connection to succeed (gateway accepted the request),
-// then post the bot's response to the Telegram group in the background.
-app.post('/trigger', async (req, res) => {
-  const { to, from, message } = req.body;
-  const fireAndForget = req.query.async === 'true';
+// --- Pipedrive webhook receiver
+app.post('/pd-webhook', async (req, res) => {
+  const payload = req.body;
+  const normalized = normalizePayload(payload);
+  const eventKey = `${normalized.action}.${normalized.object}`;
+  const creatorIdRaw = payload.meta?.user_id || payload.data?.creator_user_id || payload.data?.user_id;
+  const creatorId = creatorIdRaw != null ? String(creatorIdRaw) : null;
+  const isBotEvent = creatorId != null && BOT_USER_IDS.has(creatorId);
+  const entityId = normalized.data?.id || payload.meta?.id;
 
-  if (!to || !message) {
-    return res.status(400).json({ error: 'Missing required fields: to, message' });
+  // Dedupe duplicate webhooks within DEDUP_WINDOW_MS
+  if (isDuplicate(eventKey, entityId)) {
+    const dedupEntry = {
+      ts: new Date().toISOString(),
+      event: eventKey,
+      label: normalized.label,
+      creator_id: creatorId || null,
+      is_bot: isBotEvent,
+      routed_to: null,
+      cc: [],
+      skip_reason: 'dedupe',
+    };
+    appendEventLog(LOG_DIR, dedupEntry);
+    console.log(`[${dedupEntry.ts}] ${eventKey} "${normalized.label}" → skip (dedupe, id=${entityId})`);
+    return res.status(200).json({ received: true, routed_to: null, reason: 'dedupe' });
   }
 
-  const bot = BOTS[to];
-  if (!bot) {
-    return res.status(400).json({ error: `Unknown bot: ${to}. Valid: ${Object.keys(BOTS).join(', ')}` });
-  }
+  const route = resolveRoute(eventKey, normalized, normalized.previous, isBotEvent, routing);
 
-  if (!GATEWAY_TOKEN) {
-    return res.status(503).json({ error: 'GATEWAY_TOKEN not configured' });
-  }
-
-  console.log(`[${new Date().toISOString()}] trigger: ${from || '?'} → ${to}${fireAndForget ? ' (async)' : ''}`);
-
-  const url = `http://127.0.0.1:${bot.port}/v1/responses`;
-  const fetchOpts = {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-    },
-    body: JSON.stringify({
-      model: 'openclaw',
-      input: message,
-    }),
-    signal: AbortSignal.timeout(120_000), // 2 min timeout
+  const entry = {
+    ts: new Date().toISOString(),
+    event: eventKey,
+    label: normalized.label,
+    creator_id: creatorId || null,
+    is_bot: isBotEvent,
+    routed_to: route.targets[0] || null,
+    cc: route.targets.slice(1),
+    skip_reason: route.reason || null,
   };
+  appendEventLog(LOG_DIR, entry);
+  console.log(`[${entry.ts}] ${eventKey} "${normalized.label}" → ${entry.routed_to || 'none'}${entry.skip_reason ? ` (${entry.skip_reason})` : ''}`);
 
-  // Helper: post bot's response to the Telegram group
-  async function postToGroup(response) {
-    try {
-      const data = await response.json();
-      // OpenClaw gateway returns Responses API format:
-      // { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
-      let output = null;
-      if (Array.isArray(data.output)) {
-        // Responses API: extract text from message content blocks
-        const texts = [];
-        for (const item of data.output) {
-          if (item.type === 'message' && Array.isArray(item.content)) {
-            for (const block of item.content) {
-              if (block.type === 'output_text' && block.text) texts.push(block.text);
-              else if (block.type === 'text' && block.text) texts.push(block.text);
-            }
-          }
-        }
-        if (texts.length > 0) output = texts.join('\n');
-      } else if (typeof data.output === 'string') {
-        output = data.output;
-      }
-      // Fallback formats
-      if (!output) output = data.choices?.[0]?.message?.content || null;
+  if (route.targets.length === 0) {
+    return res.status(200).json({ received: true, routed_to: null, reason: route.reason });
+  }
 
-      if (output && typeof output === 'string' && output.length > 0) {
-        const text = output.length > 4000 ? output.slice(0, 4000) + '...' : output;
-        const botTokens = {
-          zeno: process.env.ZENO_TELEGRAM_BOT_TOKEN,
-          lux: process.env.LUX_TELEGRAM_BOT_TOKEN,
-          taro: process.env.TARO_TELEGRAM_BOT_TOKEN,
-        };
-        const botToken = botTokens[to];
-        if (botToken) {
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text }),
-          });
-          console.log(`  → ${to} response posted to group`);
-        }
-      }
-    } catch (e) {
-      console.error(`  → Failed to post ${to}'s response to group: ${e.message}`);
+  // Rollup dedupe: skip targets that already got a trigger for this rollup key
+  // within the last 90 seconds. This prevents added.person + added.lead (fired
+  // ~250ms apart by PD) from spawning two parallel sessions on the same bot.
+  const rollupKey = computeRollupKey(normalized);
+  const dispatched = [];
+  const rolledUp = [];
+  for (const t of route.targets) {
+    if (isRolledUp(t, rollupKey)) {
+      rolledUp.push(t);
+      continue;
     }
+    dispatched.push(t);
+  }
+  if (rolledUp.length > 0) {
+    console.log(`[${entry.ts}]   rolled-up (key=${rollupKey}): ${rolledUp.join(',')}`);
   }
 
-  if (fireAndForget) {
-    // Legacy async mode — respond immediately, deliver in background
-    fetch(url, fetchOpts).then(async (response) => {
-      if (!response.ok) {
-        const body = await response.text();
-        console.error(`  → Gateway error for ${to}: ${response.status} — ${body}`);
-      } else {
-        await postToGroup(response);
-        console.log(`  → ${to} finished processing`);
-      }
-    }).catch((err) => {
-      console.error(`  → Trigger delivery to ${to} failed: ${err.message}`);
-    });
-    return res.json({ delivered: true, mode: 'async' });
-  }
-
-  // Default: wait for real delivery
-  try {
-    const response = await fetch(url, fetchOpts);
-    if (!response.ok) {
-      const body = await response.text();
-      console.error(`  → Gateway error for ${to}: ${response.status} — ${body}`);
-      return res.status(502).json({ delivered: false, error: `Gateway returned ${response.status}`, detail: body });
-    }
-    // Gateway accepted — post response to group in background
-    postToGroup(response).catch(() => {});
-    console.log(`  → ${to} accepted the trigger`);
-    return res.json({ delivered: true, mode: 'sync' });
-  } catch (err) {
-    console.error(`  → Trigger delivery to ${to} failed: ${err.message}`);
-    return res.status(502).json({ delivered: false, error: err.message });
-  }
+  // Build a concise message for each remaining target. Dispatch is fire-and-forget —
+  // we ack PD immediately and let the bot work in the background.
+  const message = `[Pipedrive webhook] ${eventKey}: "${normalized.label}"`;
+  for (const t of dispatched) dispatchToBot(t, message);
+  res.status(200).json({ received: true, routed_to: entry.routed_to, cc: entry.cc, rolled_up: rolledUp });
 });
 
-// --- Tunnel Health Check ---
-// Quick connectivity test: can we reach each bot's gateway?
+// --- /events/unrouted — which event types are flowing past us?
+app.get('/events/unrouted', (req, res) => {
+  const sinceDays = parseInt(req.query.since) || 7;
+  const events = readRecentEvents(LOG_DIR, sinceDays);
+  const unrouted = events.filter((e) => e.kind !== 'group_message' && !e.routed_to && e.skip_reason !== 'skip_if_bot_creator');
+  const summary = {};
+  for (const e of unrouted) {
+    if (!summary[e.event]) summary[e.event] = { count: 0, samples: [] };
+    summary[e.event].count += 1;
+    if (summary[e.event].samples.length < 3) summary[e.event].samples.push(e.label);
+  }
+  const types = Object.entries(summary)
+    .map(([event, info]) => ({ event, count: info.count, samples: info.samples }))
+    .sort((a, b) => b.count - a.count);
+  res.json({ since_days: sinceDays, unrouted_types: types });
+});
+
+// --- Bot-to-bot trigger relay (unchanged from previous behavior)
+app.post('/trigger', async (req, res) => {
+  const { to, from, message } = req.body;
+  if (!to || !message) return res.status(400).json({ error: 'Missing required fields: to, message' });
+  const bot = BOTS[to];
+  if (!bot) return res.status(400).json({ error: `Unknown bot: ${to}` });
+  if (!GATEWAY_TOKEN) return res.status(503).json({ error: 'GATEWAY_TOKEN not configured' });
+
+  console.log(`[${new Date().toISOString()}] trigger: ${from || '?'} → ${to}`);
+  // Fire-and-forget. The relay acks immediately; the target bot's response
+  // will be posted to the group when it completes.
+  dispatchToBot(to, message);
+  res.json({ delivered: true, mode: 'async' });
+});
+
+// --- Tunnel health
 app.get('/tunnel-status', async (req, res) => {
   const results = {};
   for (const [name, bot] of Object.entries(BOTS)) {
     try {
-      const response = await fetch(`http://127.0.0.1:${bot.port}/v1/models`, {
+      const r = await fetch(`http://127.0.0.1:${bot.port}/v1/models`, {
         headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN || ''}` },
         signal: AbortSignal.timeout(5000),
       });
-      results[name] = { up: response.ok, port: bot.port, status: response.status };
+      results[name] = { up: r.ok, port: bot.port, status: r.status };
     } catch (err) {
       results[name] = { up: false, port: bot.port, error: err.message };
     }
   }
-  const allUp = Object.values(results).every(r => r.up);
+  const allUp = Object.values(results).every((r) => r.up);
   res.status(allUp ? 200 : 503).json({ tunnels: results, healthy: allUp });
 });
 
-// --- Normalize PD webhook payload ---
-function normalizePayload(payload) {
-  if (payload.meta && payload.data) {
-    const actionMap = { create: 'added', update: 'updated', change: 'updated', delete: 'deleted', merge: 'merged' };
-    const action = actionMap[payload.meta.action] || payload.meta.action;
-    const object = payload.meta.entity || payload.meta.object;
-    const data = payload.data;
-    const previous = payload.previous || null;
-    const label = data.title || data.name || data.subject || 'unknown';
-    return { action, object, data, previous, label };
-  }
-
-  if (payload.event) {
-    const [action, object] = payload.event.split('.');
-    const data = payload.current || {};
-    const previous = payload.previous || null;
-    const label = data.title || data.name || data.subject || 'unknown';
-    return { action, object, data, previous, label };
-  }
-
-  return { action: 'unknown', object: 'unknown', data: payload, previous: null, label: 'unknown' };
-}
-
-// --- Format event summary for Zeno ---
-// Pass everything through — Zeno is the router, he decides what matters.
-// Only skip notes (bots create notes, relaying would loop).
-function formatForZeno(ev) {
-  const { action, object, data, previous } = ev;
-
-  const label = data.title || data.name || data.subject || data.content?.slice(0, 60) || `ID ${data.id}`;
-  const id = data.id ? `${object.charAt(0).toUpperCase() + object.slice(1)} ID: ${data.id}` : '';
-
-  // Build a concise summary with whatever we have
-  const parts = [`${action} ${object}: "${label}"`];
-
-  // Add useful context based on what's in the payload
-  if (data.value) parts.push(`€${Number(data.value).toLocaleString()}`);
-  if (data.stage_id) parts.push(`Stage: ${data.stage_id}`);
-  if (data.status && data.status !== 'open') parts.push(`Status: ${data.status}`);
-  if (data.lost_reason) parts.push(`Reason: ${data.lost_reason}`);
-  if (data.done !== undefined) parts.push(data.done ? 'Done' : 'Pending');
-  if (data.type) parts.push(`Type: ${data.type}`);
-  if (data.deal_id) parts.push(`Deal ID: ${data.deal_id}`);
-
-  // Contact info
-  const personName = typeof data.person_id === 'object' ? data.person_id?.name : null;
-  const orgName = typeof data.org_id === 'object' ? data.org_id?.name : null;
-  if (personName) parts.push(`Contact: ${personName}`);
-  if (orgName) parts.push(`Org: ${orgName}`);
-
-  // Highlight what changed (for updates)
-  if (previous) {
-    if (previous.stage_id !== undefined && previous.stage_id !== data.stage_id) {
-      parts.push(`(moved from stage ${previous.stage_id})`);
-    }
-    if (previous.status !== undefined && previous.status !== data.status) {
-      parts.push(`(was: ${previous.status})`);
-    }
-  }
-
-  if (id) parts.push(id);
-
-  return parts.join(', ');
-}
-
-// --- Telegram: DM Zeno ---
-async function dmZeno(text) {
-  if (!ZENO_TELEGRAM_BOT_TOKEN || !ZENO_DM_CHAT_ID) {
-    console.warn('  ⚠ Zeno DM not configured — logging only');
-    console.log(`  ${text}`);
-    return;
-  }
-
-  const url = `https://api.telegram.org/bot${ZENO_TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: ZENO_DM_CHAT_ID,
-      text: text,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Telegram API error ${res.status}: ${body}`);
-  }
-}
-
-// --- SSH Tunnels to Bot Gateways ---
-const { spawn } = require('child_process');
+// --- SSH tunnels (unchanged)
 const tunnels = {};
-
 function openTunnel(botName) {
   const bot = BOTS[botName];
   if (!bot) return;
-
   console.log(`  Opening tunnel to ${botName} on localhost:${bot.port}...`);
-
   const proc = spawn('ssh', [
-    '-N',
-    '-L', `${bot.port}:127.0.0.1:18789`,
+    '-N', '-L', `${bot.port}:127.0.0.1:18789`,
     '-o', `ProxyCommand=openshell ssh-proxy --gateway-name openshell --name ${botName}`,
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o', 'ServerAliveInterval=30',
     '-o', 'ServerAliveCountMax=3',
-    `sandbox@openshell-${botName}`
+    `sandbox@openshell-${botName}`,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
-
   proc.stderr.on('data', (data) => {
     const msg = data.toString().trim();
-    if (msg && !msg.includes('Warning: Permanently added')) {
-      console.error(`  [tunnel/${botName}] ${msg}`);
-    }
+    if (msg && !msg.includes('Warning: Permanently added')) console.error(`  [tunnel/${botName}] ${msg}`);
   });
-
   proc.on('close', (code) => {
     console.log(`  [tunnel/${botName}] closed (code ${code})`);
     tunnels[botName] = null;
-    // Reconnect after 5 seconds
-    setTimeout(() => {
-      console.log(`  [tunnel/${botName}] reconnecting...`);
-      openTunnel(botName);
-    }, 5000);
+    setTimeout(() => openTunnel(botName), 5000);
   });
-
   tunnels[botName] = proc;
 }
-
-function openAllTunnels() {
-  for (const botName of Object.keys(BOTS)) {
-    openTunnel(botName);
-  }
-}
-
 function closeTunnels() {
   for (const [name, proc] of Object.entries(tunnels)) {
-    if (proc) {
-      proc.removeAllListeners('close');
-      proc.kill();
-      tunnels[name] = null;
-    }
+    if (proc) { proc.removeAllListeners('close'); proc.kill(); tunnels[name] = null; }
   }
 }
-
 process.on('SIGINT', () => { closeTunnels(); process.exit(0); });
 process.on('SIGTERM', () => { closeTunnels(); process.exit(0); });
 
-// --- Start ---
 app.listen(PORT, () => {
   console.log(`PD Webhook Relay listening on port ${PORT}`);
-  console.log(`  Events → Zeno DM (instant wake-up)`);
-  console.log(`  Configured: ${!!(ZENO_TELEGRAM_BOT_TOKEN && ZENO_DM_CHAT_ID)}`);
-
+  console.log(`  Routes loaded: ${routing.routes.length}`);
+  console.log(`  Event log dir: ${LOG_DIR}`);
   if (GATEWAY_TOKEN) {
     console.log(`  Opening SSH tunnels to bot gateways...`);
-    openAllTunnels();
+    for (const name of Object.keys(BOTS)) openTunnel(name);
   } else {
-    console.warn(`  ⚠ GATEWAY_TOKEN not set — /trigger endpoint disabled`);
+    console.warn(`  ⚠ GATEWAY_TOKEN not set — /trigger and dispatch disabled`);
   }
 });

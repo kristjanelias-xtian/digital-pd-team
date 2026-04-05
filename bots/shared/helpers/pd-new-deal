@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""pd-new-deal — create a deal with required linkages and a follow-up activity.
+
+Refuses without: title, person-id, stage, follow-up spec, and org-id on
+commercial stages (unless --residential is set).
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import date, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import max_length, non_empty  # noqa: E402
+
+PIPELINE_ID = 3  # NordLight Solar
+STAGES = {
+    "New Lead": 11,
+    "Qualified": 12,
+    "Site Visit Scheduled": 13,
+    "Proposal Sent": 14,
+    "Negotiation": 15,
+    "Verbal Agreement": 16,
+    "Contract Signed": 17,
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--title", required=False)  # validated below for a better error message
+    parser.add_argument("--person-id", type=int, required=False, dest="person_id")
+    parser.add_argument("--org-id", type=int, default=None, dest="org_id")
+    parser.add_argument("--stage", required=False, choices=list(STAGES.keys()))
+    parser.add_argument("--value", type=float, default=None)
+    parser.add_argument("--currency", default="EUR")
+    parser.add_argument("--follow-up-days", type=int, default=None, dest="follow_up_days")
+    parser.add_argument("--follow-up-date", default=None, dest="follow_up_date")
+    parser.add_argument("--follow-up-subject", default="Follow-up", dest="follow_up_subject")
+    parser.add_argument("--residential", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        non_empty(args.title or "", "--title")
+        max_length(args.title, 255, "--title")
+        if args.person_id is None:
+            raise ValueError("--person-id is required")
+        if not args.stage:
+            raise ValueError("--stage is required")
+        if args.follow_up_days is None and not args.follow_up_date:
+            raise ValueError("--follow-up-days or --follow-up-date is required — every deal needs a next action")
+        if not args.residential and args.org_id is None:
+            raise ValueError("--org-id is required for commercial deals (pass --residential for residential)")
+    except ValueError as e:
+        error(str(e), hint="pd-new-deal --title X --person-id N --stage Qualified --follow-up-days 3 [--residential | --org-id N]")
+
+    if args.follow_up_date:
+        due = args.follow_up_date
+    else:
+        due = (date.today() + timedelta(days=args.follow_up_days)).isoformat()
+
+    pd = PDClient()
+    try:
+        deal_body: dict = {
+            "title": args.title,
+            "person_id": args.person_id,
+            "pipeline_id": PIPELINE_ID,
+            "stage_id": STAGES[args.stage],
+        }
+        if args.org_id is not None:
+            deal_body["org_id"] = args.org_id
+        if args.value is not None:
+            deal_body["value"] = args.value
+            deal_body["currency"] = args.currency
+
+        deal_resp = pd.post("/deals", deal_body)
+        deal_id = deal_resp["data"]["id"]
+
+        # Create the required follow-up activity
+        act_body = {
+            "subject": args.follow_up_subject,
+            "type": "task",
+            "due_date": due,
+            "deal_id": deal_id,
+            "person_id": args.person_id,
+        }
+        if args.org_id is not None:
+            act_body["org_id"] = args.org_id
+        act_resp = pd.post("/activities", act_body)
+        activity_id = act_resp["data"]["id"]
+    except PDError as e:
+        error(str(e))
+
+    success(
+        f"deal_id={deal_id}, activity_id={activity_id} (created, follow-up {due})",
+        deal_id=deal_id,
+        activity_id=activity_id,
+        follow_up_date=due,
+    )
+
+
+if __name__ == "__main__":
+    main()

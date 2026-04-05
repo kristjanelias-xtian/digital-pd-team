@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""pd-find-or-create-org — search first, create only if no close match."""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import fuzzy_match, safe_name  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--name", required=False)  # validated below for a better error message
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        safe_name(args.name or "", "--name")
+    except ValueError as e:
+        error(str(e), hint="--name must be ≥3 chars and not a placeholder")
+
+    pd = PDClient()
+    try:
+        hits = pd.search_organizations(args.name)
+        for h in hits:
+            score = fuzzy_match(args.name, h.get("name", ""))
+            if score > 0.75:
+                success(f"org_id={h['id']} (found)", id=h["id"], mode="found")
+
+        resp = pd.post("/organizations", {"name": args.name})
+        org_id = resp["data"]["id"]
+        success(f"org_id={org_id} (created)", id=org_id, mode="created")
+    except PDError as e:
+        error(str(e))
+
+
+if __name__ == "__main__":
+    main()

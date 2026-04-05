@@ -2,6 +2,31 @@
 
 A simulated AI sales workforce for Pipedrive, playing out NordLight Solar Solutions' sales operations with three AI bots running in OpenShell sandboxes.
 
+## ⚠ Outstanding work — Task 25 (24-hour Layer-2 compliance check)
+
+The 2026-04-05 bot redesign (branch `refactor/pd-bots-redesign`, now merged to main) completed Phases A and B and the Phase C doc work, but Task 25 — the 24-hour real-data compliance observation — was **deferred** because it requires wall-clock time the tuning session could not spend. This needs to be run before the redesign is fully signed off.
+
+**What to do (runbook):**
+
+1. Enable Lux's proactive mode via Telegram DM:
+   ```
+   go proactive
+   ```
+   She will start auto-qualifying leads on her 20-minute heartbeat.
+2. Let the team run for **24 hours**. Taro picks up any conversions; Zeno observes.
+3. Run the compliance diagnostic:
+   ```bash
+   TOKEN=$(grep "Joonas (Admin)" docs/pipedrive-ids.md | head -1 | awk -F'|' '{print $3}' | tr -d ' \n\r\t')
+   PD_ADMIN_TOKEN=$TOKEN ./scripts/check-bot-compliance.py --hours 24
+   ```
+4. **Pass thresholds:** note hygiene ≥ 95%, deal well-formedness 100%, lane violations 0, group message hygiene ≥ 95%. Exit code 0 = pass, 1 = fail.
+5. **If FAIL:** the script prints which bot + which violation category. Tune via `docs/iteration-playbook.md` and re-run.
+6. **If PASS:** the redesign is complete. Archive the branch pointer, nothing more to do.
+
+**Context and known drift to expect:** see the session memory at `~/.claude/projects/-Users-kristjanelias-git-digital-pd-team/memory/project_task_25_deferred_tuning.md` — it lists the observed LLM drift categories from tuning iterations (scoring non-determinism, occasional verbose Taro messages) and the structural guardrails that should catch them (server-side sanitizer in `webhook-server/server.js`, race guard in `pd-convert-lead`, rollup dedupe in the webhook router).
+
+Remove this section once Task 25 is verified passing.
+
 > **Related repos** (all three work together on the same Mac Mini, sharing one OpenShell gateway):
 > - `~/git/openshell-tools/` — Shared bash scripts for OpenShell sandbox management (on PATH). See its `CLAUDE.md` for conventions and gotchas.
 > - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
@@ -45,11 +70,25 @@ All bots read/write Pipedrive via REST API with individual tokens.
 
 | Bot | Role | Telegram | PD User ID |
 |-----|------|----------|------------|
-| **Zeno Bot** | Sales Director / Router | @zeno_pd_bot | 25475093 |
-| **Lux Bot** | SDR / Lead Qualification | @lux_pd_bot | 25475071 |
-| **Taro Bot** | Account Executive / Closer | @taro_pd_bot | 25475082 |
+| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25475093 |
+| **Lux Bot** | SDR | @lux_pd_bot | 25475071 |
+| **Taro Bot** | Account Executive | @taro_pd_bot | 25475082 |
 
 > API tokens, Telegram bot tokens, and other credentials are stored in `docs/pipedrive-ids.md` (gitignored) and each bot's `openclaw.json` (gitignored).
+
+## Documentation map
+
+| I want to… | Read this |
+|---|---|
+| Understand the whole architecture | `docs/architecture.md` |
+| Add a new bot (new role) | `docs/new-bot-checklist.md` |
+| Tune bot behavior (fix format drift, duplicate work, stuck flows) | `docs/iteration-playbook.md` |
+| Demo the team to colleagues | `docs/demo-scenario.md` |
+| Understand what each bot owns | `bots/ROLES.md` |
+| Understand the deal mental model | `bots/shared/pipedrive/mental-model.md` |
+| See the full scoring rubric / stage criteria | `bots/shared/pipedrive/lead-lifecycle.md`, `deal-lifecycle.md` |
+| Recover from a Colima crash | "Colima VM Crash Recovery" section below |
+| Day-to-day operations (restart, backup, deploy skills) | "Operating the Bots" section below |
 
 ## Key Conventions
 
@@ -69,52 +108,78 @@ All bots read/write Pipedrive via REST API with individual tokens.
 - Lux qualifies leads (scoring 0-100), labels them Hot/Warm/Cold, converts Hot to deals.
 
 ### Webhook Flow
-1. Pipedrive event fires → webhook hits Tailscale Funnel → relay server on port 3000
-2. Relay formats a concise message → DMs Zeno via Telegram (you can mute this chat)
-3. Zeno wakes up, processes the event, posts to the group in natural language
-4. Other bots see group messages and act on their responsibilities
+1. Pipedrive event fires → Tailscale Funnel → `webhook-server` on port 3000
+2. `server.js` normalizes the payload, runs exact dedupe (eventKey+id, 15s), then rollup dedupe (target bot + person_id, 90s), then the `is_bot` creator filter
+3. Looks up `routing.yaml` to find the owning bot (leads/persons/orgs → Lux, deals → Taro with Zeno cc on stage/status/value changes, deletes → Zeno)
+4. Fire-and-forget dispatch to that bot's `/v1/responses` endpoint (10-min inner timeout); server responds 200 to PD in <50ms
+5. Bot processes, calls `pd-*` helpers, posts a line to the group via its final response text (sanitized server-side: strips bold/tables/emoji, truncates to last line if >8 lines)
+6. For Hot leads: Lux calls `POST /trigger` to wake Taro with the handoff payload
+
+Zeno is **not** on the event path. He only sees deal cc's, deletes, and direct group mentions.
 
 ## Directory Structure
 
 ```
 digital-pd-team/
 ├── CLAUDE.md                              ← This file
-├── SETUP.md                               ← Step-by-step setup guide
-├── workspace-files.txt                    ← Extra docs pushed into sandbox workspace
+├── workspace-files.txt
 ├── hooks/
-│   └── post-restart.sh                    ← Post-restart hook: restart webhook server
-├── NordLight_Solar_Company_Profile.docx   ← Source company profile
+│   └── post-restart.sh
 ├── docs/
-│   ├── nordlight-solar-profile.md         ← Company profile (markdown, loaded into bots)
-│   └── pipedrive-ids.md                   ← All PD IDs: users, stages, fields, labels
+│   ├── architecture.md                    ← Deep technical reference
+│   ├── iteration-playbook.md              ← Tuning cycle methodology
+│   ├── demo-scenario.md                   ← 10-min team demo runbook
+│   ├── new-bot-checklist.md               ← New-bot setup (10 phases)
+│   ├── nordlight-solar-profile.md         ← Company profile (loaded into bots)
+│   ├── two-ways-to-build-crm-agents.md    ← Essay: this vs. pipeagent
+│   └── pipedrive-ids.md                   ← PD IDs (gitignored)
 ├── bots/
-│   ├── shared/                            ← Shared skill files pushed to all bots
-│   │   └── pipedrive.md                   ← PD mental model, API conventions
-│   ├── zeno/                              ← Sales Director / Router
-│   │   ├── IDENTITY.md                    ← Config: personality (pushed by restore.sh)
-│   │   ├── openclaw.json                  ← Config: model, channels (gitignored)
-│   │   ├── policy.yaml                    ← Config: network egress rules
-│   │   ├── auth-profiles.json             ← Config: API key refs (gitignored)
-│   │   ├── restore.sh                     ← Thin wrapper → shared restore-bot.sh (on PATH)
-│   │   ├── credentials/                   ← Config: Telegram allowFrom (gitignored)
-│   │   └── skills/
-│   │       └── pipedrive-router/SKILL.md  ← Config: pushed by deploy-skill.sh
-│   ├── lux/                               ← SDR / Lead Qualification
-│   │   ├── (same structure)
-│   │   └── skills/
-│   │       └── pipedrive-sdr/SKILL.md
-│   └── taro/                              ← Account Executive / Closer
-│       ├── (same structure)
-│       └── skills/
-│           └── pipedrive-ae/SKILL.md
-├── backups/                               ← Sandbox state snapshots (gitignored)
-│   └── <bot>/<timestamp>/.openclaw/       ← Full state: workspace, sessions, offsets
+│   ├── ROLES.md                           ← Role registry (source of truth)
+│   ├── TEMPLATE/                          ← Copy to add a new bot
+│   ├── shared/
+│   │   ├── rulebook-base.md               ← Non-negotiables every bot inherits
+│   │   ├── handoffs.md                    ← Handoff protocol
+│   │   ├── pipedrive/                     ← On-demand reference docs
+│   │   │   ├── README.md
+│   │   │   ├── mental-model.md
+│   │   │   ├── notes-guide.md
+│   │   │   ├── lead-lifecycle.md
+│   │   │   ├── deal-lifecycle.md
+│   │   │   ├── custom-fields.md
+│   │   │   ├── account-anchors.md
+│   │   │   └── api-conventions.md
+│   │   └── helpers/                       ← Python pd-* CLIs
+│   │       ├── pd-search
+│   │       ├── pd-find-or-create-person
+│   │       ├── pd-find-or-create-org
+│   │       ├── pd-new-lead
+│   │       ├── pd-new-deal
+│   │       ├── pd-note
+│   │       ├── pd-advance-stage
+│   │       ├── pd-convert-lead
+│   │       ├── lib/
+│   │       └── tests/
+│   ├── lux/
+│   │   ├── IDENTITY.md                    ← Personality only (~20 lines)
+│   │   ├── SKILL.md                       ← Thin role rulebook (~55 lines)
+│   │   ├── openclaw.json
+│   │   ├── policy.yaml
+│   │   ├── auth-profiles.json             (gitignored)
+│   │   ├── restore.sh
+│   │   └── credentials/                   (gitignored)
+│   ├── taro/                              (same shape)
+│   └── zeno/                              (same shape)
+├── backups/                               (gitignored)
 ├── webhook-server/
-│   ├── server.js                          ← Express relay: PD webhook → Zeno DM + trigger relay
+│   ├── server.js                          ← YAML-driven router
+│   ├── router.js
+│   ├── routing.yaml                       ← Event → bot route table
+│   ├── logs/                              (gitignored)
+│   │   └── events-<date>.jsonl
 │   ├── package.json
-│   ├── .env                               ← Tokens (gitignored)
-│   └── .env.example
-└── scripts/                               ← (future automation scripts)
+│   └── .env                               (gitignored)
+└── scripts/
+    └── check-bot-compliance.py            ← Layer-2 diagnostic
 ```
 
 ## Config vs State — The Deployment Model
@@ -126,10 +191,10 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 |------|-------------------|-------------|
 | `openclaw.json` | `~/.openclaw/openclaw.json` | Model, channels, heartbeat, plugins |
 | `IDENTITY.md` | `~/.openclaw/agents/main/agent/IDENTITY.md` | Personality and instructions |
+| `SKILL.md` | `~/.agents/skills/main/SKILL.md` | Role rulebook and capabilities |
 | `auth-profiles.json` | `~/.openclaw/agents/main/agent/auth-profiles.json` | API key references |
 | `policy.yaml` | Set at sandbox creation | Network egress rules |
 | `credentials/` | `~/.openclaw/credentials/` | Telegram allowFrom |
-| `skills/*/SKILL.md` | `~/.agents/skills/*/SKILL.md` | Bot capabilities |
 
 **State (bot creates, never overwrite):**
 | File | Location in sandbox | What it does |
@@ -148,9 +213,8 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 
 | What you want to do | Command | Restarts gateway? | Memory safe? |
 |---|---|---|---|
-| Push a skill change | `deploy-skill.sh taro pipedrive-ae` | No | Yes |
-| Push all skills to one bot | `deploy-skill.sh taro` | No | Yes |
-| Push all skills to all bots | `deploy-skill.sh all` | No | Yes |
+| Push skill change for one bot | `deploy-skill.sh taro` | No | Yes |
+| Push skills for all bots | `deploy-skill.sh all` | No | Yes |
 | Full restore (config change) | `./bots/taro/restore.sh` | Yes | Yes* |
 | Back up full sandbox state | `backup-bot.sh taro` | No | N/A |
 | Restore memory from backup | `restore-state.sh taro` | No | Yes |
@@ -167,10 +231,10 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 
 ```bash
 # 1. Edit the skill locally
-vim bots/taro/skills/pipedrive-ae/SKILL.md
+vim bots/taro/SKILL.md
 
 # 2. Push it (no restart, no memory loss, takes ~2 seconds)
-deploy-skill.sh taro pipedrive-ae
+deploy-skill.sh taro
 
 # 3. Bot picks up the new skill on its next interaction
 ```
@@ -224,9 +288,8 @@ The script uses the admin token, deletes in dependency order, handles batching a
 
 ### Deploy skills (safe — no restart, no memory loss)
 ```bash
-deploy-skill.sh taro                    # Push all skills for taro
-deploy-skill.sh taro pipedrive-ae       # Push only one skill
-deploy-skill.sh all                     # Push all skills for all bots
+deploy-skill.sh taro                    # Push SKILL.md + shared helpers for taro
+deploy-skill.sh all                     # Push SKILL.md + shared for all bots
 ```
 
 ### Back up a bot's full state
@@ -234,6 +297,19 @@ deploy-skill.sh all                     # Push all skills for all bots
 backup-bot.sh taro                      # → backups/taro/<timestamp>/
 backup-bot.sh taro ./my-backups         # Custom backup dir
 # Keeps timestamped snapshots, symlinks `latest`
+```
+
+### Scheduled daily backups
+All running bots (from this repo AND `home-ai`) are backed up daily at 03:00 by
+a launchd agent installed from `openshell-tools/launchd/`. Because the agent
+uses `~/git/home-ai` as its working directory, snapshots for `zeno`, `lux`,
+`taro` land in `~/git/home-ai/backups/<bot>/<timestamp>/` — not in this repo.
+Currently accumulating indefinitely (no pruning). See
+`openshell-tools/README.md` "Scheduled backups" for install, logs, and the
+retention TODO.
+```bash
+launchctl start com.kristjan.backup-all-bots    # trigger a run now
+launchctl list | grep backup-all-bots           # loaded + last exit status
 ```
 
 ### Start/Restart a bot (full restore)
@@ -294,6 +370,16 @@ Bots default to passive — only act on direct triggers. Toggle via Telegram gro
 @lux_pd_bot go proactive      ← starts checking for unqualified leads
 ```
 Zeno can also toggle them: "@taro_pd_bot go proactive"
+
+### Webhook routing
+
+Event → bot routing is declared in `webhook-server/routing.yaml`. To add a new routed event type:
+
+1. Hit `GET /events/unrouted?since=7d` to confirm the event is actually flowing.
+2. Add a route to `routing.yaml`.
+3. Restart the webhook server: `kill $(lsof -ti:3000) && cd webhook-server && nohup node server.js > server.log 2>&1 &`.
+
+Zeno is **not** the router. Events go directly to the role that owns them: leads/persons/orgs → Lux, deals → Taro (with Zeno cc'd on stage/status/value changes).
 
 ## Colima VM Crash Recovery
 
