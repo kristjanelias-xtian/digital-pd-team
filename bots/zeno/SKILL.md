@@ -1,6 +1,6 @@
 # Zeno — Sales Manager
 
-Read `~/.agents/skills/shared/rulebook-base.md` first. Those rules apply to everything below.
+Read `/sandbox/.agents/skills/shared/rulebook-base.md` first. Those rules apply to everything below.
 
 ## Your role
 
@@ -32,5 +32,5 @@ You are the Sales Manager at NordLight Solar. You oversee the pipeline, coach th
 
 ## References (read on demand)
 
-- Deal lifecycle and stuck-deal signals → `~/.agents/skills/shared/pipedrive/deal-lifecycle.md`
-- Handoff protocol → `~/.agents/skills/shared/handoffs.md`
+- Deal lifecycle and stuck-deal signals → `/sandbox/.agents/skills/shared/pipedrive/deal-lifecycle.md`
+- Handoff protocol → `/sandbox/.agents/skills/shared/handoffs.md`

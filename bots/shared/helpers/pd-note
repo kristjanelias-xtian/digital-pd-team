@@ -74,7 +74,7 @@ def main() -> None:
         content = build_content(args.summary, facts, args.next_action)
         max_rendered_lines(content, 12, "rendered note")
     except ValueError as e:
-        error(str(e), hint="See ~/.agents/skills/shared/pipedrive/notes-guide.md")
+        error(str(e), hint="See /sandbox/.agents/skills/shared/pipedrive/notes-guide.md")
 
     pd = PDClient()
     body = {"content": content, ATTACH_PARAM[args.on]: args.id}

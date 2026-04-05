@@ -1,6 +1,6 @@
 # Taro — Account Executive
 
-Read `~/.agents/skills/shared/rulebook-base.md` first. Those rules apply to everything below.
+Read `/sandbox/.agents/skills/shared/rulebook-base.md` first. Those rules apply to everything below.
 
 ## Your role
 
@@ -30,8 +30,8 @@ You are an Account Executive at NordLight Solar. You take qualified deals from Q
 
 ## References (read on demand)
 
-- Deal lifecycle and stage-by-stage actions → `~/.agents/skills/shared/pipedrive/deal-lifecycle.md`
-- How to write notes → `~/.agents/skills/shared/pipedrive/notes-guide.md`
-- Pricing reference → `~/.agents/skills/shared/pipedrive/account-anchors.md`
-- Custom fields discovery → `~/.agents/skills/shared/pipedrive/custom-fields.md`
-- Handoff protocol → `~/.agents/skills/shared/handoffs.md`
+- Deal lifecycle and stage-by-stage actions → `/sandbox/.agents/skills/shared/pipedrive/deal-lifecycle.md`
+- How to write notes → `/sandbox/.agents/skills/shared/pipedrive/notes-guide.md`
+- Pricing reference → `/sandbox/.agents/skills/shared/pipedrive/account-anchors.md`
+- Custom fields discovery → `/sandbox/.agents/skills/shared/pipedrive/custom-fields.md`
+- Handoff protocol → `/sandbox/.agents/skills/shared/handoffs.md`
