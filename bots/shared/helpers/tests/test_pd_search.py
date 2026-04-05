@@ -18,7 +18,7 @@ def test_refuses_missing_term():
 def test_returns_empty_for_nonsense(pd, cleanup_test_records):
     result = run(["ZZZZNOMATCHZZZZ__test__"])
     assert result.returncode == 0
-    assert "no matches" in result.stdout.lower() or result.stdout.strip() == ""
+    assert "no matches" in result.stdout.lower()
 
 
 def test_finds_existing_person(pd, cleanup_test_records):
