@@ -25,5 +25,10 @@ docs/superpowers/
 # Claude Code
 .claude/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # Office docs (binary, not useful in git)
 *.docx

@@ -1,0 +1,9 @@
+[project]
+name = "pd-helpers"
+version = "0.1.0"
+description = "Opinionated Pipedrive CLI helpers for the NordLight sales bots"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
