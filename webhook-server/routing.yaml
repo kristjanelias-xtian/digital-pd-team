@@ -10,12 +10,21 @@ routes:
 
   - event: updated.lead
     to: lux
+    skip_if_bot_creator: true
 
   - event: added.person
     to: lux
     skip_if_bot_creator: true
 
+  - event: updated.person
+    to: lux
+    skip_if_bot_creator: true
+
   - event: added.organization
+    to: lux
+    skip_if_bot_creator: true
+
+  - event: updated.organization
     to: lux
     skip_if_bot_creator: true
 
@@ -26,6 +35,7 @@ routes:
   - event: updated.deal
     to: taro
     cc: zeno
+    skip_if_bot_creator: true
     only_on_change:
       - stage_id
       - status
