@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""pd-new-lead — create a lead with required person link."""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.pd_client import PDClient, PDError  # noqa: E402
+from lib.output import error, success  # noqa: E402
+from lib.validators import fuzzy_match, max_length, non_empty  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--title", required=False)  # validated below for a better error message
+    parser.add_argument("--person-id", type=int, required=False, dest="person_id")
+    parser.add_argument("--org-id", type=int, default=None, dest="org_id")
+    parser.add_argument("--value", type=float, default=None)
+    parser.add_argument("--currency", default="EUR")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        non_empty(args.title or "", "--title")
+        max_length(args.title, 255, "--title")
+        if args.person_id is None:
+            raise ValueError("--person-id is required (create the person first with pd-find-or-create-person)")
+    except ValueError as e:
+        error(str(e), hint="pd-new-lead --title \"X\" --person-id N [--org-id N] [--value N]")
+
+    pd = PDClient()
+    try:
+        # Duplicate check
+        existing = pd.search_leads(args.title)
+        for e in existing:
+            if fuzzy_match(args.title, e.get("title", "")) > 0.85:
+                error(
+                    f"near-duplicate open lead already exists: lead_id={e['id']} ('{e.get('title')}')",
+                    hint="If this is intentional, use a more distinctive title",
+                )
+
+        body: dict = {"title": args.title, "person_id": args.person_id}
+        if args.org_id:
+            body["organization_id"] = args.org_id
+        if args.value is not None:
+            body["value"] = {"amount": args.value, "currency": args.currency}
+        resp = pd.post("/leads", body)
+        lead_id = resp["data"]["id"]
+    except PDError as e:
+        error(str(e))
+    success(f"lead_id={lead_id} (created)", id=lead_id)
+
+
+if __name__ == "__main__":
+    main()
