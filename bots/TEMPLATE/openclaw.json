@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.4.5"
+  },
+  "auth": {
+    "profiles": {
+      "anthropic:default": {
+        "provider": "anthropic",
+        "mode": "api_key"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-6"
+      },
+      "models": {
+        "anthropic/claude-sonnet-4-6": {
+          "params": {
+            "cacheRetention": "short"
+          }
+        }
+      },
+      "memorySearch": {
+        "enabled": true
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "1h"
+      },
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "heartbeat": {
+        "every": "20m"
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "tools": {
+    "exec": {
+      "security": "full",
+      "ask": "off"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "REPLACE_WITH_BOT_TOKEN",
+      "groupPolicy": "open",
+      "streaming": "partial",
+      "groups": {
+        "-5253446483": {
+          "enabled": true,
+          "requireMention": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "REPLACE_WITH_GATEWAY_TOKEN"
+    },
+    "http": {
+      "endpoints": {
+        "responses": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      }
+    }
+  },
+  "messages": {
+    "groupChat": {
+      "mentionPatterns": [
+        "@?{botfirstname}_pd_bot",
+        "@?{botfirstname}\\s*bot",
+        "\\b{botfirstname}\\b"
+      ]
+    }
+  }
+}
