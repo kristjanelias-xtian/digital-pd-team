@@ -46,12 +46,23 @@ const routing = loadRouting(resolve(__dirname, 'routing.yaml'));
 console.log(`Loaded ${routing.routes.length} routes from routing.yaml`);
 
 // --- Webhook deduplication
-// Pipedrive occasionally re-fires the same webhook for a single entity create
-// (observed: creating a person + lead via API in one script produces duplicate
-// added.person + added.lead events ~15s apart). Dedupe on (eventKey + id) within
-// a short window so the bots don't process the same event multiple times.
+// Two layers:
+//
+// 1. EXACT dedupe on (eventKey + entity_id): catches PD's habit of re-firing
+//    the same webhook for a single entity create (~15s apart). Short window.
+//
+// 2. ROLLUP dedupe on (target_bot + rollup_key): when a user creates a person
+//    and a lead together, PD fires added.person AND added.lead within ~250ms.
+//    Both get routed to the same bot, spawning parallel cold sessions that
+//    race each other and produce duplicate group messages, duplicate notes,
+//    and duplicate deals. The rollup key is the *subject of the action* — for
+//    person/lead/deal events it's the person_id (if we can extract it). If
+//    the same bot got a rollup-key trigger within 90s, skip.
 const DEDUP_WINDOW_MS = 15_000;
-const recentEvents = new Map(); // key: `${eventKey}:${id}` → ts(ms)
+const ROLLUP_WINDOW_MS = 90_000;
+const recentEvents = new Map();   // `${eventKey}:${id}` → ts(ms)
+const recentRollups = new Map();  // `${bot}:${rollup_key}` → ts(ms)
+
 function isDuplicate(eventKey, entityId) {
   if (!entityId) return false;
   const key = `${eventKey}:${entityId}`;
@@ -61,10 +72,43 @@ function isDuplicate(eventKey, entityId) {
   recentEvents.set(key, now);
   return false;
 }
-// Prune old entries every minute to keep the map bounded
+
+// Compute a rollup key for an event — the underlying "subject" that parallel
+// webhook events for the same action can share. Returns null if we can't
+// extract one, meaning the event will NOT be rollup-deduped.
+function computeRollupKey(normalized) {
+  const d = normalized.data || {};
+  const obj = normalized.object;
+  if (obj === 'person') return `person:${d.id}`;
+  if (obj === 'organization') return `org:${d.id}`;
+  if (obj === 'lead') {
+    // Lead events roll up to the linked person if we have one, otherwise the lead itself.
+    if (d.person_id) return `person:${d.person_id}`;
+    return `lead:${d.id}`;
+  }
+  if (obj === 'deal') {
+    if (d.person_id) return `person:${d.person_id}`;
+    return `deal:${d.id}`;
+  }
+  return null;
+}
+
+function isRolledUp(botName, rollupKey) {
+  if (!rollupKey) return false;
+  const key = `${botName}:${rollupKey}`;
+  const now = Date.now();
+  const prev = recentRollups.get(key);
+  if (prev && now - prev < ROLLUP_WINDOW_MS) return true;
+  recentRollups.set(key, now);
+  return false;
+}
+
+// Prune stale entries every minute to keep the maps bounded
 setInterval(() => {
-  const cutoff = Date.now() - DEDUP_WINDOW_MS;
-  for (const [k, ts] of recentEvents) if (ts < cutoff) recentEvents.delete(k);
+  const cutoffExact = Date.now() - DEDUP_WINDOW_MS;
+  const cutoffRollup = Date.now() - ROLLUP_WINDOW_MS;
+  for (const [k, ts] of recentEvents) if (ts < cutoffExact) recentEvents.delete(k);
+  for (const [k, ts] of recentRollups) if (ts < cutoffRollup) recentRollups.delete(k);
 }, 60_000).unref();
 
 app.use(express.json({ limit: '1mb' }));
@@ -158,6 +202,32 @@ async function postResponseToGroup(response, botName) {
       if (SENTINELS.includes(trimmed) || trimmed.length === 0) output = null;
     }
 
+    // Server-side enforcement of THE HARD LIMIT (rulebook rule 0): group
+    // messages must be ≤ 8 lines, plain prose, no emoji/bold/markdown tables.
+    // The rulebook tells bots this, but LLMs drift on verbose reasoning
+    // sessions. If the bot produces a compliant summary line at the end of a
+    // wall of thinking, we keep only that line.
+    if (output) {
+      // Strip bold markers, markdown headers (inline), and table pipes.
+      let cleaned = output
+        .replace(/\*\*(.+?)\*\*/g, '$1')          // **bold** → bold
+        .replace(/^#{1,6}\s+/gm, '')              // # headers → plain
+        .replace(/^\s*\|.*\|\s*$/gm, '')          // table rows → empty
+        .replace(/^\s*\|[-: ]+\|\s*$/gm, '')      // table dividers → empty
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}]/gu, '') // emoji
+        .replace(/\n{3,}/g, '\n\n');              // collapse runs of blank lines
+      const lines = cleaned.split('\n');
+      const nonEmpty = lines.filter((l) => l.trim().length > 0);
+      if (nonEmpty.length > 8) {
+        // Too long — keep only the last non-empty line as the message.
+        // This is where Lux/Taro naturally put their summary sentence.
+        cleaned = nonEmpty[nonEmpty.length - 1];
+        console.log(`  → [${botName}] truncated ${nonEmpty.length}-line output to last line`);
+      }
+      output = cleaned.trim();
+      if (output.length === 0) output = null;
+    }
+
     if (output && output.length > 0) {
       const text = output.length > 4000 ? output.slice(0, 4000) + '...' : output;
       const token = BOT_TOKENS[botName];
@@ -228,11 +298,28 @@ app.post('/pd-webhook', async (req, res) => {
     return res.status(200).json({ received: true, routed_to: null, reason: route.reason });
   }
 
-  // Build a concise message for each target. Dispatch is fire-and-forget —
+  // Rollup dedupe: skip targets that already got a trigger for this rollup key
+  // within the last 90 seconds. This prevents added.person + added.lead (fired
+  // ~250ms apart by PD) from spawning two parallel sessions on the same bot.
+  const rollupKey = computeRollupKey(normalized);
+  const dispatched = [];
+  const rolledUp = [];
+  for (const t of route.targets) {
+    if (isRolledUp(t, rollupKey)) {
+      rolledUp.push(t);
+      continue;
+    }
+    dispatched.push(t);
+  }
+  if (rolledUp.length > 0) {
+    console.log(`[${entry.ts}]   rolled-up (key=${rollupKey}): ${rolledUp.join(',')}`);
+  }
+
+  // Build a concise message for each remaining target. Dispatch is fire-and-forget —
   // we ack PD immediately and let the bot work in the background.
   const message = `[Pipedrive webhook] ${eventKey}: "${normalized.label}"`;
-  for (const t of route.targets) dispatchToBot(t, message);
-  res.status(200).json({ received: true, routed_to: entry.routed_to, cc: entry.cc });
+  for (const t of dispatched) dispatchToBot(t, message);
+  res.status(200).json({ received: true, routed_to: entry.routed_to, cc: entry.cc, rolled_up: rolledUp });
 });
 
 // --- /events/unrouted — which event types are flowing past us?
