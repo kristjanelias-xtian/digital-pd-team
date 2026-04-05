@@ -41,6 +41,15 @@ def main() -> None:
     except PDError as e:
         error(f"could not fetch lead: {e}")
 
+    # Idempotency guard: an archived lead has already been converted. Refuse
+    # rather than create a second deal. Returning an error (non-zero exit) is
+    # the clearest signal to an LLM caller that no new deal was created.
+    if lead.get("is_archived"):
+        error(
+            f"lead {args.lead_id} is already archived — it was previously converted",
+            hint="Do not retry pd-convert-lead. Search the deals pipeline for the existing deal via pd-search.",
+        )
+
     label_ids = lead.get("label_ids") or []
     if HOT_LABEL not in label_ids:
         error(

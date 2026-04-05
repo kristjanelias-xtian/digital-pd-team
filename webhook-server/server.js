@@ -90,29 +90,41 @@ function normalizePayload(payload) {
   return { action: 'unknown', object: 'unknown', data: payload, previous: null, label: 'unknown' };
 }
 
-// --- Dispatch to a bot's gateway
-async function dispatchToBot(botName, message) {
+// --- Dispatch to a bot's gateway (fire-and-forget)
+// The bot's full pipeline (read → score → act → post) can easily take 2-5
+// minutes of wall time. Blocking the webhook handler that long causes PD to
+// think delivery failed and re-fire the webhook, which is why we saw the
+// dedupe storm. Instead: return immediately from /pd-webhook and let the
+// dispatch run in the background. The bot's final text output is posted to
+// the group whenever it actually completes.
+function dispatchToBot(botName, message) {
   const bot = BOTS[botName];
-  if (!bot || !GATEWAY_TOKEN) return { ok: false, error: 'bot or gateway not configured' };
-  try {
-    const response = await fetch(`http://127.0.0.1:${bot.port}/v1/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-      },
-      body: JSON.stringify({ model: 'openclaw', input: message }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      return { ok: false, error: `gateway ${response.status}: ${body}` };
-    }
-    await postResponseToGroup(response, botName);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message };
+  if (!bot || !GATEWAY_TOKEN) {
+    console.error(`  → dispatch(${botName}) skipped: bot or gateway not configured`);
+    return;
   }
+  // Fire-and-forget: no await, errors logged but don't propagate
+  (async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${bot.port}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        },
+        body: JSON.stringify({ model: 'openclaw', input: message }),
+        signal: AbortSignal.timeout(600_000), // 10 minutes
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        console.error(`  → dispatch(${botName}) gateway ${response.status}: ${body}`);
+        return;
+      }
+      await postResponseToGroup(response, botName);
+    } catch (err) {
+      console.error(`  → dispatch(${botName}) failed: ${err.message}`);
+    }
+  })();
 }
 
 // --- Extract bot response text and post to the group
@@ -134,6 +146,17 @@ async function postResponseToGroup(response, botName) {
       output = data.output;
     }
     if (!output) output = data.choices?.[0]?.message?.content || null;
+
+    // Filter out null-response sentinel text that openclaw sometimes returns.
+    // These are diagnostic placeholders, not something to broadcast to the group.
+    if (output) {
+      const trimmed = output.trim();
+      const SENTINELS = [
+        'No response from OpenClaw.',
+        'No response from OpenClaw',
+      ];
+      if (SENTINELS.includes(trimmed) || trimmed.length === 0) output = null;
+    }
 
     if (output && output.length > 0) {
       const text = output.length > 4000 ? output.slice(0, 4000) + '...' : output;
@@ -205,10 +228,10 @@ app.post('/pd-webhook', async (req, res) => {
     return res.status(200).json({ received: true, routed_to: null, reason: route.reason });
   }
 
-  // Build a concise message for each target
+  // Build a concise message for each target. Dispatch is fire-and-forget —
+  // we ack PD immediately and let the bot work in the background.
   const message = `[Pipedrive webhook] ${eventKey}: "${normalized.label}"`;
-  const dispatches = route.targets.map((t) => dispatchToBot(t, message));
-  await Promise.all(dispatches);
+  for (const t of route.targets) dispatchToBot(t, message);
   res.status(200).json({ received: true, routed_to: entry.routed_to, cc: entry.cc });
 });
 
@@ -238,9 +261,10 @@ app.post('/trigger', async (req, res) => {
   if (!GATEWAY_TOKEN) return res.status(503).json({ error: 'GATEWAY_TOKEN not configured' });
 
   console.log(`[${new Date().toISOString()}] trigger: ${from || '?'} → ${to}`);
-  const result = await dispatchToBot(to, message);
-  if (result.ok) return res.json({ delivered: true });
-  return res.status(502).json({ delivered: false, error: result.error });
+  // Fire-and-forget. The relay acks immediately; the target bot's response
+  // will be posted to the group when it completes.
+  dispatchToBot(to, message);
+  res.json({ delivered: true, mode: 'async' });
 });
 
 // --- Tunnel health
