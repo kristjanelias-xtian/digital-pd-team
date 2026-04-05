@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import time
 from typing import Any
+from urllib.parse import quote
 
 
 class PDError(RuntimeError):
@@ -74,21 +75,21 @@ class PDClient:
 
     # Convenience helpers
     def search_persons(self, term: str) -> list[dict]:
-        result = self.get(f"/persons/search?term={term}&limit=20")
+        result = self.get(f"/persons/search?term={quote(term, safe='')}&limit=20")
         items = result.get("data", {}).get("items", [])
         return [item.get("item", {}) for item in items]
 
     def search_organizations(self, term: str) -> list[dict]:
-        result = self.get(f"/organizations/search?term={term}&limit=20")
+        result = self.get(f"/organizations/search?term={quote(term, safe='')}&limit=20")
         items = result.get("data", {}).get("items", [])
         return [item.get("item", {}) for item in items]
 
     def search_leads(self, term: str) -> list[dict]:
-        result = self.get(f"/leads/search?term={term}&limit=20")
+        result = self.get(f"/leads/search?term={quote(term, safe='')}&limit=20")
         items = result.get("data", {}).get("items", [])
         return [item.get("item", {}) for item in items]
 
     def search_deals(self, term: str) -> list[dict]:
-        result = self.get(f"/deals/search?term={term}&limit=20")
+        result = self.get(f"/deals/search?term={quote(term, safe='')}&limit=20")
         items = result.get("data", {}).get("items", [])
         return [item.get("item", {}) for item in items]

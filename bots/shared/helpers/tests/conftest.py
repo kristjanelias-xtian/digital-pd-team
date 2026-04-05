@@ -71,6 +71,3 @@ def cleanup_test_records(pd: PDClient):
             pass
 
 
-def test_marker() -> str:
-    """Return the marker substring every test record must contain."""
-    return TEST_MARKER
