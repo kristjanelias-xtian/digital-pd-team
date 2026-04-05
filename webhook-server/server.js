@@ -31,8 +31,10 @@ const BOTS = {
   taro: { port: parseInt(process.env.TARO_GATEWAY_PORT) || 18803 },
 };
 
-// PD user IDs for loop prevention — events created by these users are bot-generated
-const BOT_USER_IDS = new Set([25475093, 25475071, 25475082]); // Zeno, Lux, Taro
+// PD user IDs for loop prevention — events created by these users are bot-generated.
+// Stored as strings because Pipedrive serializes user_id as a string in webhook payloads;
+// comparing with numeric IDs silently missed every bot-creator check.
+const BOT_USER_IDS = new Set(['25475093', '25475071', '25475082']); // Zeno, Lux, Taro
 
 const BOT_TOKENS = {
   zeno: process.env.ZENO_TELEGRAM_BOT_TOKEN,
@@ -42,6 +44,28 @@ const BOT_TOKENS = {
 
 const routing = loadRouting(resolve(__dirname, 'routing.yaml'));
 console.log(`Loaded ${routing.routes.length} routes from routing.yaml`);
+
+// --- Webhook deduplication
+// Pipedrive occasionally re-fires the same webhook for a single entity create
+// (observed: creating a person + lead via API in one script produces duplicate
+// added.person + added.lead events ~15s apart). Dedupe on (eventKey + id) within
+// a short window so the bots don't process the same event multiple times.
+const DEDUP_WINDOW_MS = 15_000;
+const recentEvents = new Map(); // key: `${eventKey}:${id}` → ts(ms)
+function isDuplicate(eventKey, entityId) {
+  if (!entityId) return false;
+  const key = `${eventKey}:${entityId}`;
+  const now = Date.now();
+  const prev = recentEvents.get(key);
+  if (prev && now - prev < DEDUP_WINDOW_MS) return true;
+  recentEvents.set(key, now);
+  return false;
+}
+// Prune old entries every minute to keep the map bounded
+setInterval(() => {
+  const cutoff = Date.now() - DEDUP_WINDOW_MS;
+  for (const [k, ts] of recentEvents) if (ts < cutoff) recentEvents.delete(k);
+}, 60_000).unref();
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -140,8 +164,27 @@ app.post('/pd-webhook', async (req, res) => {
   const payload = req.body;
   const normalized = normalizePayload(payload);
   const eventKey = `${normalized.action}.${normalized.object}`;
-  const creatorId = payload.meta?.user_id || payload.data?.creator_user_id || payload.data?.user_id;
-  const isBotEvent = BOT_USER_IDS.has(creatorId);
+  const creatorIdRaw = payload.meta?.user_id || payload.data?.creator_user_id || payload.data?.user_id;
+  const creatorId = creatorIdRaw != null ? String(creatorIdRaw) : null;
+  const isBotEvent = creatorId != null && BOT_USER_IDS.has(creatorId);
+  const entityId = normalized.data?.id || payload.meta?.id;
+
+  // Dedupe duplicate webhooks within DEDUP_WINDOW_MS
+  if (isDuplicate(eventKey, entityId)) {
+    const dedupEntry = {
+      ts: new Date().toISOString(),
+      event: eventKey,
+      label: normalized.label,
+      creator_id: creatorId || null,
+      is_bot: isBotEvent,
+      routed_to: null,
+      cc: [],
+      skip_reason: 'dedupe',
+    };
+    appendEventLog(LOG_DIR, dedupEntry);
+    console.log(`[${dedupEntry.ts}] ${eventKey} "${normalized.label}" → skip (dedupe, id=${entityId})`);
+    return res.status(200).json({ received: true, routed_to: null, reason: 'dedupe' });
+  }
 
   const route = resolveRoute(eventKey, normalized, normalized.previous, isBotEvent, routing);
 
