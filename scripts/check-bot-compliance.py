@@ -72,7 +72,7 @@ def fetch_deals_since(token: str, cutoff: datetime) -> list[dict]:
     deals = []
     start = 0
     while True:
-        resp = pd_get(f"/deals?sort=add_time DESC&start={start}&limit=100", token)
+        resp = pd_get(f"/deals?sort=add_time DESC&start={start}&limit=100&pipeline_id={PIPELINE_ID}", token)
         batch = resp.get("data") or []
         if not batch:
             break
@@ -140,7 +140,7 @@ def _came_from_lead(deal: dict) -> bool:
     return True  # can't cheaply tell from one endpoint; loosen this check
 
 
-def group_message_violations(cutoff: datetime) -> dict[str, list[str]]:
+def group_message_violations(cutoff: datetime) -> tuple[dict[str, list[str]], dict[str, int]]:
     violations: dict[str, list[str]] = {"lux": [], "taro": [], "zeno": []}
     counts: dict[str, int] = {"lux": 0, "taro": 0, "zeno": 0}
     for f in sorted(GROUP_LOG_DIR.glob("events-*.jsonl")) if GROUP_LOG_DIR.exists() else []:
