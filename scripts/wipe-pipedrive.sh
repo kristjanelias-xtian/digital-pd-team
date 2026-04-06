@@ -17,19 +17,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# --- Config ---
-API_TOKEN="dbff6464d92162e5ed721ac7885dae7b22de96cd"  # Joonas (Admin)
+# --- Config (tokens from environment or docs/pipedrive-ids.md) ---
+_extract_token() {
+  local label="$1"
+  grep "$label" "$PROJECT_DIR/docs/pipedrive-ids.md" | head -1 | awk -F'|' '{print $3}' | tr -d ' \n\r\t'
+}
+
+API_TOKEN="${PD_ADMIN_TOKEN:-$(_extract_token "Joonas (Admin)")}"
+if [ -z "$API_TOKEN" ]; then
+  echo "ERROR: Could not find admin token. Set PD_ADMIN_TOKEN or check docs/pipedrive-ids.md" >&2
+  exit 1
+fi
 BASE_URL="https://api.pipedrive.com/v1"
 BATCH_SIZE=100       # PD returns max 100 per page
 RATE_LIMIT_MS=250    # ms between API calls (avoid 429s)
 
 # Telegram config for bot notifications
 TELEGRAM_GROUP_ID="-5253446483"
-ZENO_TOKEN="8741645726:AAG5JuH_DkHiRAEwJZbtXXuOcwww8ptgkL0"
+ZENO_TOKEN="${ZENO_TELEGRAM_TOKEN:-$(grep "Zeno Bot" "$PROJECT_DIR/docs/pipedrive-ids.md" | grep -o '[0-9]*:AA[^ |]*' | head -1 || true)}"
 
 # Webhook server (for trigger relay)
 WEBHOOK_SERVER="http://localhost:3000"
-GATEWAY_TOKEN="ebb941ed0a28eb977fdb9479d2cad93f7d3e8ea77152b0d3"
+GATEWAY_TOKEN="${OPENSHELL_GATEWAY_TOKEN:-$(grep "Gateway token" "$PROJECT_DIR/docs/pipedrive-ids.md" | awk -F'|' '{print $3}' | tr -d ' \n\r\t' || true)}"
 
 # --- Parse args ---
 DRY_RUN=false
