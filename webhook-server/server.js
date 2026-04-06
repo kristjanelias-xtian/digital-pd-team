@@ -111,7 +111,49 @@ setInterval(() => {
   for (const [k, ts] of recentRollups) if (ts < cutoffRollup) recentRollups.delete(k);
 }, 60_000).unref();
 
+// Trust Tailscale Funnel's X-Forwarded-For header so req.ip is the real client IP
+app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
+
+// --- IP allowlist for Pipedrive webhooks
+// Resolves the PD webhook origin hostname on startup and every 5 minutes.
+// Only applied to POST /pd-webhook — local endpoints (health, trigger, tunnel-status) are unrestricted.
+const { resolve: dnsResolve } = require('dns');
+const PD_WEBHOOK_HOST = process.env.PD_WEBHOOK_HOST || 'qc8m7z2q.pipedrive.blue';
+const LOCAL_PREFIXES = ['127.', '::1', '::ffff:127.', '192.168.', '10.', '100.'];
+let allowedIPs = new Set();
+
+function refreshAllowedIPs() {
+  dnsResolve(PD_WEBHOOK_HOST, (err, addresses) => {
+    if (err) {
+      console.error(`[ip-allow] DNS resolve failed for ${PD_WEBHOOK_HOST}: ${err.message}`);
+      return; // keep previous set
+    }
+    allowedIPs = new Set(addresses);
+    console.log(`[ip-allow] Refreshed ${allowedIPs.size} IPs from ${PD_WEBHOOK_HOST}`);
+  });
+}
+refreshAllowedIPs();
+setInterval(refreshAllowedIPs, 5 * 60_000).unref();
+
+function isAllowedIP(ip) {
+  if (!ip) return false;
+  // Strip ::ffff: IPv4-mapped prefix
+  const clean = ip.replace(/^::ffff:/, '');
+  if (allowedIPs.has(clean)) return true;
+  // Always allow local/private IPs (trigger relay, health checks, Tailscale)
+  for (const prefix of LOCAL_PREFIXES) {
+    if (ip.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+app.use('/pd-webhook', (req, res, next) => {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  if (isAllowedIP(ip)) return next();
+  console.warn(`[ip-allow] Blocked ${req.method} /pd-webhook from ${ip}`);
+  res.status(403).json({ error: 'forbidden', ip });
+});
 
 // --- Health
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'pd-webhook-relay' }));
