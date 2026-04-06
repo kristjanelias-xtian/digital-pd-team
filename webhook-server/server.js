@@ -150,8 +150,10 @@ function isAllowedIP(ip) {
 
 app.use('/pd-webhook', (req, res, next) => {
   const ip = req.ip || req.socket?.remoteAddress || '';
-  if (isAllowedIP(ip)) return next();
-  console.warn(`[ip-allow] Blocked ${req.method} /pd-webhook from ${ip}`);
+  const fwd = req.headers['x-forwarded-for'] || '';
+  const allowed = isAllowedIP(ip);
+  console.log(`[ip-allow] ${allowed ? 'OK' : 'BLOCKED'} ${ip} (fwd: ${fwd})`);
+  if (allowed) return next();
   res.status(403).json({ error: 'forbidden', ip });
 });
 
