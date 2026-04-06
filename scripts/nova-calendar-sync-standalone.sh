@@ -63,6 +63,7 @@ import sys, json; u = json.load(sys.stdin).get('data',{})
 print(u.get('id',''), u.get('email',''), u.get('name',''))
 ")
 [ -z "$MY_USER_ID" ] && { echo "ERROR: Auth failed." >&2; exit 1; }
+export MY_USER_ID MY_EMAIL MY_NAME
 echo "  User: $MY_NAME ($MY_EMAIL)"
 
 # --- Find or create pipeline ---
@@ -116,18 +117,20 @@ echo "  Stages: Upcoming=$STAGE_UPCOMING, In Progress=$STAGE_IN_PROGRESS, Done=$
 echo "  Advancing past deals..."
 TODAY=$(date '+%Y-%m-%d')
 
+DEALS_TMP=$(mktemp)
 pd_get "/deals?pipeline_id=$PIPELINE_ID&status=open&limit=100" | python3 -c "
 import sys, json
 for d in (json.load(sys.stdin).get('data') or []):
     if d.get('pipeline_id') == $PIPELINE_ID:
         print(f\"{d['id']}\t{d.get('stage_id','')}\t{d.get('title','')}\")
-" | while IFS=$'\t' read -r deal_id stage_id title; do
+" > "$DEALS_TMP"
+while IFS=$'\t' read -r deal_id stage_id title; do
   [ -z "$deal_id" ] && continue
   next_due=$(pd_get "/deals/$deal_id/activities?done=0&limit=1" | python3 -c "
 import sys, json
 a = json.load(sys.stdin).get('data') or []
 print(a[0].get('due_date','') if a else '')
-")
+" || true)
   if [ -z "$next_due" ] && [ "$stage_id" != "$STAGE_DONE" ]; then
     [ "$DRY_RUN" = true ] && echo "  [dry-run] '$title' → Done" && continue
     pd_put "/deals/$deal_id" "{\"stage_id\":$STAGE_DONE}" > /dev/null
@@ -141,11 +144,16 @@ print(a[0].get('due_date','') if a else '')
     pd_put "/deals/$deal_id" "{\"stage_id\":$STAGE_IN_PROGRESS}" > /dev/null
     echo "  '$title' → In Progress"
   fi
-done
+done < "$DEALS_TMP"
+rm -f "$DEALS_TMP"
 
 # --- Fetch and process upcoming activities ---
 WINDOW_END=$(python3 -c "from datetime import datetime,timedelta; print((datetime.now()+timedelta(hours=$HOURS)).strftime('%Y-%m-%d'))")
 echo "  Scanning activities ($TODAY → $WINDOW_END)..."
+
+# Write activity list to temp file (avoids pipe subshell + set -e issues)
+TMPFILE=$(mktemp)
+trap "rm -f $TMPFILE" EXIT
 
 pd_get "/activities?user_id=$MY_USER_ID&done=0&sort=due_date&limit=500" | python3 -c "
 import sys, json
@@ -154,7 +162,9 @@ for a in (json.load(sys.stdin).get('data') or []):
     if due >= '$TODAY' and due <= '$WINDOW_END' and a.get('type') == 'meeting':
         deal_id = a.get('deal_id') or ''
         print(f\"{a['id']}\t{due}\t{a.get('due_time','')}\t{a.get('subject','')}\t{deal_id}\")
-" | while IFS=$'\t' read -r act_id due due_time subject existing_deal; do
+" > "$TMPFILE"
+
+while IFS=$'\t' read -r act_id due due_time subject existing_deal; do
   [ -z "$act_id" ] && continue
 
   # Skip if already linked
@@ -164,22 +174,23 @@ for a in (json.load(sys.stdin).get('data') or []):
 
   # Fetch attendees and pick contact
   CONTACT=$(pd_get "/activities/$act_id?include_fields=attendees" | python3 -c "
-import sys, json
+import sys, json, os
 data = json.load(sys.stdin).get('data',{})
 attendees = data.get('attendees') or []
+my_email = os.environ['MY_EMAIL'].lower()
+my_uid = int(os.environ['MY_USER_ID'])
 filtered = []
-my_email = '$MY_EMAIL'.lower()
 for a in attendees:
     email = (a.get('email_address') or a.get('email') or '').lower()
     if not email or 'resource.calendar.google.com' in email: continue
-    if email == my_email or a.get('user_id') == $MY_USER_ID: continue
+    if email == my_email or a.get('user_id') == my_uid: continue
     filtered.append(a)
 if not filtered: sys.exit(0)
 c = next((a for a in filtered if a.get('is_organizer') in (True, 1)), filtered[0])
 email = (c.get('email_address') or c.get('email') or '').lower()
 name = c.get('name') or email.split('@')[0].replace('.', ' ').title()
 print(f'{email}\t{name}\t{len(filtered)}')
-")
+" || true)
 
   [ -z "$CONTACT" ] && continue
   CONTACT_EMAIL=$(echo "$CONTACT" | cut -f1)
@@ -192,39 +203,54 @@ print(f'{email}\t{name}\t{len(filtered)}')
     continue
   fi
 
+  export CONTACT_EMAIL CONTACT_NAME
+  echo "  [$due $due_time] $subject"
+  echo "    Contact: $CONTACT_NAME ($CONTACT_EMAIL)"
+
   # Find or create person
-  ENCODED_EMAIL=$(python3 -c "from urllib.parse import quote; print(quote('$CONTACT_EMAIL'))")
+  ENCODED_EMAIL=$(python3 -c "import sys; from urllib.parse import quote; print(quote(sys.argv[1]))" "$CONTACT_EMAIL")
   PERSON_ID=$(pd_get "/persons/search?term=$ENCODED_EMAIL&limit=5&fields=email" | python3 -c "
-import sys, json
+import sys, json, os
+target = os.environ['CONTACT_EMAIL']
 for item in (json.load(sys.stdin).get('data',{}).get('items') or []):
     p = item.get('item',{})
     for e in (p.get('emails') or []):
-        if (e or '').lower() == '$CONTACT_EMAIL': print(p['id']); sys.exit(0)
+        if (e or '').lower() == target: print(p['id']); sys.exit(0)
 print('')
-")
+" || true)
 
   if [ -z "$PERSON_ID" ]; then
-    SAFE_NAME=$(python3 -c "import json; print(json.dumps('''$CONTACT_NAME'''))")
-    PERSON_ID=$(pd_post "/persons" "{\"name\":$SAFE_NAME,\"email\":[{\"value\":\"$CONTACT_EMAIL\",\"primary\":true}]}" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
-    echo "  [$due $due_time] $subject → person $PERSON_ID (created: $CONTACT_NAME)"
+    PERSON_ID=$(python3 -c "
+import sys, json, os
+name = os.environ['CONTACT_NAME']
+email = os.environ['CONTACT_EMAIL']
+body = json.dumps({'name': name, 'email': [{'value': email, 'primary': True}]})
+print(body)
+" | curl -sS -X POST "${BASE_URL}/persons?api_token=${PD_API_TOKEN}" -H "Content-Type: application/json" -d @- | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
+    echo "    Person $PERSON_ID (created)"
   else
-    echo "  [$due $due_time] $subject → person $PERSON_ID (found)"
+    echo "    Person $PERSON_ID (found)"
   fi
 
   # Find or create deal
-  ENCODED_TITLE=$(python3 -c "from urllib.parse import quote; print(quote('''$subject'''))")
-  DEAL_ID=$(pd_get "/deals/search?term=$ENCODED_TITLE&limit=20&status=open" | python3 -c "
-import sys, json
+  ENCODED_TITLE=$(python3 -c "import sys; from urllib.parse import quote; print(quote(sys.argv[1]))" "$subject")
+  DEAL_ID=$(pd_get "/deals/search?term=$ENCODED_TITLE&limit=20&status=open" | SUBJECT="$subject" python3 -c "
+import sys, json, os
+title = os.environ['SUBJECT']
+pid = $PIPELINE_ID
 for item in (json.load(sys.stdin).get('data',{}).get('items') or []):
     deal = item.get('item',{})
-    if deal.get('title') == '''$subject''' and deal.get('pipeline',{}).get('id') == $PIPELINE_ID:
+    if deal.get('title') == title and deal.get('pipeline',{}).get('id') == pid:
         print(deal['id']); sys.exit(0)
 print('')
-")
+" || true)
 
   if [ -z "$DEAL_ID" ]; then
-    SAFE_TITLE=$(python3 -c "import json; print(json.dumps('''$subject'''))")
-    DEAL_ID=$(pd_post "/deals" "{\"title\":$SAFE_TITLE,\"person_id\":$PERSON_ID,\"pipeline_id\":$PIPELINE_ID,\"stage_id\":$STAGE_UPCOMING}" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
+    DEAL_ID=$(SUBJECT="$subject" python3 -c "
+import json, os
+body = json.dumps({'title': os.environ['SUBJECT'], 'person_id': $PERSON_ID, 'pipeline_id': $PIPELINE_ID, 'stage_id': $STAGE_UPCOMING})
+print(body)
+" | curl -sS -X POST "${BASE_URL}/deals?api_token=${PD_API_TOKEN}" -H "Content-Type: application/json" -d @- | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
     echo "    Deal $DEAL_ID (created)"
   else
     echo "    Deal $DEAL_ID (found)"
@@ -233,7 +259,7 @@ print('')
   # Link activity
   pd_put "/activities/$act_id" "{\"deal_id\":$DEAL_ID,\"person_id\":$PERSON_ID}" > /dev/null
   echo "    Activity $act_id linked"
-done
+done < "$TMPFILE"
 
 echo ""
 echo "Done."
