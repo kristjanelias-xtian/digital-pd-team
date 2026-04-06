@@ -134,7 +134,7 @@ function refreshAllowedIPs() {
   });
 }
 refreshAllowedIPs();
-setInterval(refreshAllowedIPs, 5 * 60_000).unref();
+setInterval(refreshAllowedIPs, 24 * 60 * 60_000).unref();
 
 function isAllowedIP(ip) {
   if (!ip) return false;
