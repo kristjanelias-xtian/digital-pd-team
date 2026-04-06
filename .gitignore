@@ -14,6 +14,10 @@ backups/
 
 # Logs
 *.log
+scripts/logs/
+
+# Launchd plists (contain API tokens)
+scripts/*.plist
 
 # Node
 node_modules/
