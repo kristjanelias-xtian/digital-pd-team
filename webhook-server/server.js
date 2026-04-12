@@ -34,7 +34,7 @@ const BOTS = {
 // PD user IDs for loop prevention — events created by these users are bot-generated.
 // Stored as strings because Pipedrive serializes user_id as a string in webhook payloads;
 // comparing with numeric IDs silently missed every bot-creator check.
-const BOT_USER_IDS = new Set(['25475093', '25475071', '25475082']); // Zeno, Lux, Taro
+const BOT_USER_IDS = new Set(['25523746', '25523713', '25523724']); // Zeno, Lux, Taro
 
 const BOT_TOKENS = {
   zeno: process.env.ZENO_TELEGRAM_BOT_TOKEN,

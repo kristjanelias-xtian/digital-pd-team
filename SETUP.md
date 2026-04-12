@@ -5,7 +5,7 @@ A digital sales workforce for Pipedrive, simulating NordLight Solar Solutions' s
 ## Architecture
 
 ```
-Pipedrive (xtian.pipedrive.com)
+Pipedrive (nordlight-digital-pd-team.pipedrive.com)
     │
     │ webhooks (v2 format)
     ▼
@@ -61,18 +61,18 @@ Save each bot token.
 
 ## Step 2: Create Pipedrive Users
 
-In your Pipedrive instance (xtian.pipedrive.com):
+In your Pipedrive instance (nordlight-digital-pd-team.pipedrive.com):
 
 1. **Settings → Manage Users → Add User**
 2. Create 3 users:
 
 | Name | Email | PD User ID | API Token |
 |------|-------|------------|-----------|
-| Zeno Bot | zeno.bot@example.com | 25475093 | `<ZENO_PD_API_TOKEN>` |
-| Lux Bot | lux.bot@example.com | 25475071 | `<LUX_PD_API_TOKEN>` |
-| Taro Bot | taro.bot@example.com | 25475082 | `<TARO_PD_API_TOKEN>` |
+| Zeno Bot | zeno.bot@xtian.me | 25523746 | `<ZENO_PD_API_TOKEN>` |
+| Lux Bot | lux.bot@xtian.me | 25523713 | `<LUX_PD_API_TOKEN>` |
+| Taro Bot | taro.bot@xtian.me | 25523724 | `<TARO_PD_API_TOKEN>` |
 
-**Note:** Each PD user has their own API token. Log in as each user → Settings → Personal Preferences → API to get it. The admin token (Joonas): `<ADMIN_PD_API_TOKEN>`
+**Note:** Each PD user has their own API token. Log in as each user → Settings → Personal Preferences → API to get it. The admin token (eager.salesman): `<ADMIN_PD_API_TOKEN>`
 
 ### Pipeline
 

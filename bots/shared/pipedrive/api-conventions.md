@@ -3,7 +3,7 @@
 ## Base URL and auth
 
 **Base URL:** `https://api.pipedrive.com/v1`
-**Instance:** xtian.pipedrive.com
+**Instance:** nordlight-digital-pd-team.pipedrive.com
 **Auth:** API token as query param: `?api_token={token}`
 
 You do **not** use raw tokens. You use the `pd` command in the sandbox (which has your token baked in) or one of the `pd-*` helpers (which shell out to `pd`). If a helper refuses a request, fix the input — do not work around it with raw curl.

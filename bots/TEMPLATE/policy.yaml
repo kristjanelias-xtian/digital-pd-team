@@ -37,7 +37,7 @@ network_policies:
   pipedrive_instance:
     name: pipedrive-instance
     endpoints:
-      - host: xtian.pipedrive.com
+      - host: nordlight-digital-pd-team.pipedrive.com
         port: 443
         tls: skip
     binaries:

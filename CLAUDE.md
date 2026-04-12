@@ -41,7 +41,7 @@ Remove this section once Task 25 is verified passing.
 ## Architecture
 
 ```
-                     Pipedrive (xtian.pipedrive.com)
+                     Pipedrive (nordlight-digital-pd-team.pipedrive.com)
                               │
                               │ webhooks (v2 format)
                               ▼
@@ -70,9 +70,9 @@ All bots read/write Pipedrive via REST API with individual tokens.
 
 | Bot | Role | Telegram | PD User ID |
 |-----|------|----------|------------|
-| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25475093 |
-| **Lux Bot** | SDR | @lux_pd_bot | 25475071 |
-| **Taro Bot** | Account Executive | @taro_pd_bot | 25475082 |
+| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25523746 |
+| **Lux Bot** | SDR | @lux_pd_bot | 25523713 |
+| **Taro Bot** | Account Executive | @taro_pd_bot | 25523724 |
 
 > API tokens, Telegram bot tokens, and other credentials are stored in `docs/pipedrive-ids.md` (gitignored) and each bot's `openclaw.json` (gitignored).
 
@@ -472,7 +472,7 @@ upgrade-openshell.sh --skip-backup
 - PD validates the webhook URL on creation — endpoint must be reachable
 
 ### Network Policy
-- Both `api.pipedrive.com` and `xtian.pipedrive.com` must be in policy.yaml
+- Both `api.pipedrive.com` and `nordlight-digital-pd-team.pipedrive.com` must be in policy.yaml
 - All HTTPS endpoints need `tls: skip`
 - Policies can be updated live with `openshell policy set`
 - Local services (on host) are reachable at `192.168.5.2` from inside sandboxes
@@ -484,8 +484,8 @@ upgrade-openshell.sh --skip-backup
 
 ## Pipedrive Instance
 
-- **URL**: xtian.pipedrive.com
-- **Pipeline**: NordLight Solar (ID: 3) with 7 stages
+- **URL**: nordlight-digital-pd-team.pipedrive.com
+- **Pipeline**: NordLight Solar (ID: 2) with 7 stages
 - **Admin token**: See `docs/pipedrive-ids.md` (gitignored)
 - **Webhook**: All events → `https://<your-tailscale-hostname>/pd-webhook`
 - See `docs/pipedrive-ids.md` for full ID reference (gitignored — create from template)

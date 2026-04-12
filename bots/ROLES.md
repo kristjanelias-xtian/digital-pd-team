@@ -8,7 +8,7 @@ When adding a new bot, fill in a row *before* writing any code. If you can't wri
 
 ### Lux — SDR (Sales Development Rep)
 
-**Bot:** Lux Bot (`@lux_pd_bot`, PD user 25475071)
+**Bot:** Lux Bot (`@lux_pd_bot`, PD user 25523713)
 **One-line job:** Qualify inbound leads, prospect outbound, book meetings.
 **Owns:** Leads Inbox, lead scoring and labelling, person/org creation from new contacts, first-contact outreach, lead→deal conversion.
 **Does not own:** Deals, proposals, closing, site visits, post-sale.
@@ -17,7 +17,7 @@ When adding a new bot, fill in a row *before* writing any code. If you can't wri
 
 ### Taro — AE (Account Executive)
 
-**Bot:** Taro Bot (`@taro_pd_bot`, PD user 25475082)
+**Bot:** Taro Bot (`@taro_pd_bot`, PD user 25523724)
 **One-line job:** Take qualified deals from Qualified through Contract Signed.
 **Owns:** Deals in the NordLight Solar pipeline, discovery calls, site visits, proposals, negotiation, closing.
 **Does not own:** Leads, re-qualification, post-sale customer success.
@@ -26,7 +26,7 @@ When adding a new bot, fill in a row *before* writing any code. If you can't wri
 
 ### Zeno — Sales Manager
 
-**Bot:** Zeno Bot (`@zeno_pd_bot`, PD user 25475093)
+**Bot:** Zeno Bot (`@zeno_pd_bot`, PD user 25523746)
 **One-line job:** Oversee pipeline health, coach the team, escalate stuck or big deals.
 **Owns:** Pipeline oversight, team coordination, stuck-deal nudges, big-deal escalation to human, win celebrations, weekly summaries.
 **Does not own:** Lead intake, deal execution, record creation, data hygiene.

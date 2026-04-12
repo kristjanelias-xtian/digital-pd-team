@@ -21,12 +21,12 @@ from lib.output import error, success  # noqa: E402
 # refuse rather than create a second deal.
 RACE_WINDOW_SECONDS = 300
 
-PIPELINE_ID = 3
+PIPELINE_ID = 2
 STAGES = {
-    "Qualified": 12,
-    "Site Visit Scheduled": 13,
+    "Qualified": 7,
+    "Site Visit Scheduled": 8,
 }
-HOT_LABEL = "43b6da41-0a3f-49b3-8024-c09fd2708d02"
+HOT_LABEL = "b2c398df-f588-4c23-9428-9c04c20182d8"
 
 
 def main() -> None:

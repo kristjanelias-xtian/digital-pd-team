@@ -23,7 +23,7 @@ _extract_token() {
   grep "$label" "$PROJECT_DIR/docs/pipedrive-ids.md" | head -1 | awk -F'|' '{print $3}' | tr -d ' \n\r\t'
 }
 
-API_TOKEN="${PD_ADMIN_TOKEN:-$(_extract_token "Joonas (Admin)")}"
+API_TOKEN="${PD_ADMIN_TOKEN:-$(_extract_token "eager.salesman (Admin)")}"
 if [ -z "$API_TOKEN" ]; then
   echo "ERROR: Could not find admin token. Set PD_ADMIN_TOKEN or check docs/pipedrive-ids.md" >&2
   exit 1
@@ -317,8 +317,8 @@ echo "╔═══════════════════════�
 echo "║     Pipedrive Account Wipe Script        ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "Account: xtian.pipedrive.com"
-echo "Token:   Joonas (Admin)"
+echo "Account: nordlight-digital-pd-team.pipedrive.com"
+echo "Token:   eager.salesman (Admin)"
 $DRY_RUN && echo "Mode:    DRY RUN (nothing will be deleted)"
 $DRY_RUN || echo "Mode:    LIVE — data will be permanently deleted"
 echo ""

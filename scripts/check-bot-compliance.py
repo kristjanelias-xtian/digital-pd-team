@@ -26,11 +26,11 @@ from pathlib import Path
 
 import requests
 
-PIPELINE_ID = 3
+PIPELINE_ID = 2
 BOTS = {
-    25475093: "zeno",
-    25475071: "lux",
-    25475082: "taro",
+    25523746: "zeno",
+    25523713: "lux",
+    25523724: "taro",
 }
 BOT_IDS = {v: k for k, v in BOTS.items()}
 MARKDOWN_TABLE_RE = re.compile(r"^\s*\|.*\|.*$", re.MULTILINE)
