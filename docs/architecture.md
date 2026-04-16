@@ -14,7 +14,7 @@ The system demonstrates autonomous multi-agent CRM operations: bots qualify lead
 
 ```
                         Pipedrive CRM
-                    (xtian.pipedrive.com)
+                    (nordlight-digital-pd-team.pipedrive.com)
                             |
                             | v2 webhooks
                             v
@@ -627,7 +627,7 @@ Allowed endpoints (all bots):
   - api.anthropic.com:443       (LLM inference)
   - api.telegram.org:443        (Telegram bot API)
   - api.pipedrive.com:443       (Pipedrive REST API)
-  - xtian.pipedrive.com:443     (Pipedrive instance)
+  - nordlight-digital-pd-team.pipedrive.com:443     (Pipedrive instance)
   - 192.168.5.2:3000            (webhook relay on host)
 
 All other outbound connections are blocked.

@@ -16,15 +16,15 @@ from lib.pd_client import PDClient, PDError  # noqa: E402
 from lib.output import error, success  # noqa: E402
 from lib.validators import max_length, non_empty  # noqa: E402
 
-PIPELINE_ID = 3  # NordLight Solar
+PIPELINE_ID = 2  # NordLight Solar
 STAGES = {
-    "New Lead": 11,
-    "Qualified": 12,
-    "Site Visit Scheduled": 13,
-    "Proposal Sent": 14,
-    "Negotiation": 15,
-    "Verbal Agreement": 16,
-    "Contract Signed": 17,
+    "New Lead": 6,
+    "Qualified": 7,
+    "Site Visit Scheduled": 8,
+    "Proposal Sent": 9,
+    "Negotiation": 10,
+    "Verbal Agreement": 11,
+    "Contract Signed": 12,
 }
 
 

@@ -34,7 +34,7 @@ const BOTS = {
 // PD user IDs for loop prevention — events created by these users are bot-generated.
 // Stored as strings because Pipedrive serializes user_id as a string in webhook payloads;
 // comparing with numeric IDs silently missed every bot-creator check.
-const BOT_USER_IDS = new Set(['25475093', '25475071', '25475082']); // Zeno, Lux, Taro
+const BOT_USER_IDS = new Set(['25523746', '25523713', '25523724']); // Zeno, Lux, Taro
 
 const BOT_TOKENS = {
   zeno: process.env.ZENO_TELEGRAM_BOT_TOKEN,
@@ -246,28 +246,38 @@ async function postResponseToGroup(response, botName) {
       if (SENTINELS.includes(trimmed) || trimmed.length === 0) output = null;
     }
 
-    // Server-side enforcement of THE HARD LIMIT (rulebook rule 0): group
-    // messages must be ≤ 8 lines, plain prose, no emoji/bold/markdown tables.
-    // The rulebook tells bots this, but LLMs drift on verbose reasoning
-    // sessions. If the bot produces a compliant summary line at the end of a
-    // wall of thinking, we keep only that line.
+    // Server-side sanitizer for group messages.
+    // Toggle with SANITIZE env var: "on" = strip reasoning + enforce line limits,
+    // "off" (default) = only strip markdown/emoji, pass everything through.
+    const sanitize = (process.env.SANITIZE || 'off').toLowerCase() === 'on';
     if (output) {
-      // Strip bold markers, markdown headers (inline), and table pipes.
+      // Always strip markdown formatting (bold, headers, tables) and emoji
       let cleaned = output
         .replace(/\*\*(.+?)\*\*/g, '$1')          // **bold** → bold
         .replace(/^#{1,6}\s+/gm, '')              // # headers → plain
         .replace(/^\s*\|.*\|\s*$/gm, '')          // table rows → empty
         .replace(/^\s*\|[-: ]+\|\s*$/gm, '')      // table dividers → empty
-        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}]/gu, '') // emoji
+        .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '') // emoji (broad)
         .replace(/\n{3,}/g, '\n\n');              // collapse runs of blank lines
-      const lines = cleaned.split('\n');
-      const nonEmpty = lines.filter((l) => l.trim().length > 0);
-      if (nonEmpty.length > 8) {
-        // Too long — keep only the last non-empty line as the message.
-        // This is where Lux/Taro naturally put their summary sentence.
-        cleaned = nonEmpty[nonEmpty.length - 1];
-        console.log(`  → [${botName}] truncated ${nonEmpty.length}-line output to last line`);
+
+      if (sanitize) {
+        const lines = cleaned.split('\n');
+        const nonEmpty = lines.filter((l) => l.trim().length > 0);
+        // Strip reasoning/thinking lines
+        const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move|two |three |found |the (older|newer|first|second|other)|this (lead|deal|person)|running |calling |creating |updating |now |ok[, ]|alright)/i;
+        const filtered = nonEmpty.filter((l) => !reasoningPatterns.test(l.trim()));
+        if (filtered.length > 0 && filtered.length < nonEmpty.length) {
+          console.log(`  → [${botName}] stripped ${nonEmpty.length - filtered.length} reasoning lines`);
+          cleaned = filtered.join('\n');
+        }
+        // After stripping reasoning, if still >6 lines, keep only the last 5
+        const finalLines = cleaned.split('\n').filter((l) => l.trim().length > 0);
+        if (finalLines.length > 6) {
+          cleaned = finalLines.slice(-5).join('\n');
+          console.log(`  → [${botName}] trimmed ${finalLines.length}-line output to last 5 lines`);
+        }
       }
+
       output = cleaned.trim();
       if (output.length === 0) output = null;
     }
@@ -359,6 +369,21 @@ app.post('/pd-webhook', async (req, res) => {
     console.log(`[${entry.ts}]   rolled-up (key=${rollupKey}): ${rolledUp.join(',')}`);
   }
 
+  // Send an immediate ack to the group so the team sees the bot is working.
+  // Only for added.lead and added.deal events (new work, not updates).
+  if (eventKey === 'added.lead' && dispatched.includes('lux')) {
+    const ackText = `New lead: ${normalized.label} -- on it.`;
+    const ackToken = BOT_TOKENS['lux'];
+    if (ackToken) {
+      fetch(`https://api.telegram.org/bot${ackToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text: ackText }),
+      }).catch(() => {});
+      appendEventLog(LOG_DIR, { ts: new Date().toISOString(), kind: 'group_message', bot: 'lux', text: ackText, lines: 1 });
+    }
+  }
+
   // Build a concise message for each remaining target. Dispatch is fire-and-forget —
   // we ack PD immediately and let the bot work in the background.
   const message = `[Pipedrive webhook] ${eventKey}: "${normalized.label}"`;
@@ -392,6 +417,21 @@ app.post('/trigger', async (req, res) => {
   if (!GATEWAY_TOKEN) return res.status(503).json({ error: 'GATEWAY_TOKEN not configured' });
 
   console.log(`[${new Date().toISOString()}] trigger: ${from || '?'} → ${to}`);
+
+  // Immediate ack to the group so the team sees Taro is picking up
+  if (to === 'taro' && from === 'lux') {
+    const ackToken = BOT_TOKENS['taro'];
+    if (ackToken) {
+      const ackText = `Got it from Lux -- picking up now.`;
+      fetch(`https://api.telegram.org/bot${ackToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text: ackText }),
+      }).catch(() => {});
+      appendEventLog(LOG_DIR, { ts: new Date().toISOString(), kind: 'group_message', bot: 'taro', text: ackText, lines: 1 });
+    }
+  }
+
   // Fire-and-forget. The relay acks immediately; the target bot's response
   // will be posted to the group when it completes.
   dispatchToBot(to, message);

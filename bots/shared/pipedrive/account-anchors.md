@@ -1,42 +1,41 @@
 # NordLight Solar — Account Anchors
 
-Stable facts about the xtian.pipedrive.com instance. These IDs do not change.
+Stable facts about the nordlight-digital-pd-team.pipedrive.com instance. These IDs do not change.
 
 ## Pipeline
 
 | Pipeline | ID |
 |----------|----|
-| NordLight Solar | 3 |
+| NordLight Solar | 2 |
 
 ## Stages
 
 | Stage | ID | Probability |
 |-------|----|-------------|
-| New Lead | 11 | 0% |
-| Qualified | 12 | 15% |
-| Site Visit Scheduled | 13 | 30% |
-| Proposal Sent | 14 | 50% |
-| Negotiation | 15 | 70% |
-| Verbal Agreement | 16 | 85% |
-| Contract Signed | 17 | 100% |
+| New Lead | 6 | 0% |
+| Qualified | 7 | 15% |
+| Site Visit Scheduled | 8 | 30% |
+| Proposal Sent | 9 | 50% |
+| Negotiation | 10 | 70% |
+| Verbal Agreement | 11 | 85% |
+| Contract Signed | 12 | 100% |
 
 ## Team (PD user IDs)
 
 | Name | Role | User ID |
 |------|------|---------|
-| Kristjan Elias | Owner | 980093 |
-| Joonas Karulauk | Admin | 25474697 |
-| Zeno Bot | Sales Manager | 25475093 |
-| Lux Bot | SDR | 25475071 |
-| Taro Bot | Account Executive | 25475082 |
+| Sarah Chen | Admin | 24847686 |
+| Zeno Bot | Sales Manager | 25523746 |
+| Lux Bot | SDR | 25523713 |
+| Taro Bot | Account Executive | 25523724 |
 
 ## Lead labels
 
 | Label | UUID |
 |-------|------|
-| Hot | 43b6da41-0a3f-49b3-8024-c09fd2708d02 |
-| Warm | fd40651a-b18b-4781-9ac7-de9ed226ad3b |
-| Cold | d0a616f6-603a-48e7-9620-03057cfe3648 |
+| Hot | b2c398df-f588-4c23-9428-9c04c20182d8 |
+| Warm | 7600d49f-0c56-425f-ba81-a4aa8b8e92ca |
+| Cold | 50bd6ded-2184-4812-8afe-945a64df3654 |
 
 ## Company profile
 

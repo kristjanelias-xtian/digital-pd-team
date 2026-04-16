@@ -15,7 +15,7 @@ You operate across parallel webhook sessions. For a single lead creation, PD fir
 **Before doing ANY read of lead-lifecycle.md, ANY score, ANY pd-note, ANY pd-convert-lead — first run this check:**
 
 1. `pd-search` or direct GET: read the lead's notes.
-2. If there is ANY note on this lead (authored by anyone), check the authors. If one of them was authored by you (the PD user ID for your bot name — Lux=25475071, Taro=25475082, Zeno=25475093), **STOP IMMEDIATELY**. This is a duplicate trigger. Someone-else-is-you did the work.
+2. If there is ANY note on this lead (authored by anyone), check the authors. If one of them was authored by you (the PD user ID for your bot name — Lux=25523713, Taro=25523724, Zeno=25523746), **STOP IMMEDIATELY**. This is a duplicate trigger. Someone-else-is-you did the work.
 3. Look at the lead's `is_archived` flag. If true, also stop — it's been converted already.
 4. For each finding above, the correct response is ONE short sentence to the group referencing the prior work and then exit. Examples:
    - `Mari Tamm — already qualified, deal #89.`

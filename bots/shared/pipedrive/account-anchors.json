@@ -1,0 +1,122 @@
+{
+  "domain": "nordlight-digital-pd-team.pipedrive.com",
+  "pipeline": {
+    "name": "NordLight Solar",
+    "id": 2
+  },
+  "stages": [
+    {
+      "name": "New Lead",
+      "id": 6
+    },
+    {
+      "name": "Qualified",
+      "id": 7
+    },
+    {
+      "name": "Site Visit Scheduled",
+      "id": 8
+    },
+    {
+      "name": "Proposal Sent",
+      "id": 9
+    },
+    {
+      "name": "Negotiation",
+      "id": 10
+    },
+    {
+      "name": "Verbal Agreement",
+      "id": 11
+    },
+    {
+      "name": "Contract Signed",
+      "id": 12
+    }
+  ],
+  "dealFields": [
+    {
+      "name": "Property Type",
+      "key": "8262382e192642cafa32e59a2c78551f2ebfe87c",
+      "id": 46
+    },
+    {
+      "name": "System Size (kW)",
+      "key": "d58dec3ff71fd2b6816c4f2ab53260ba9276a152",
+      "id": 47
+    },
+    {
+      "name": "Number of Panels",
+      "key": "0269b6e5cdd38dd25321cf80b12e6027b1879edf",
+      "id": 48
+    },
+    {
+      "name": "Roof Type",
+      "key": "450f5e76b4f98fa7d07ac7aa1bdc32b3820cd8fc",
+      "id": 49
+    },
+    {
+      "name": "Permit Required",
+      "key": "5b00de8351759ec4ba25e804082161cffae76149",
+      "id": 50
+    },
+    {
+      "name": "Estimated Installation Date",
+      "key": "5b74afa3da11f56d36fe23d85ba5515eaccba03a",
+      "id": 51
+    },
+    {
+      "name": "Battery Storage Included",
+      "key": "f2b192139c2e7933a4a47ce79be90b1a665f48a3",
+      "id": 52
+    },
+    {
+      "name": "Financing Method",
+      "key": "e97868cf3497ad4355e6b1718ce64f8d7ae6b6c7",
+      "id": 53
+    }
+  ],
+  "personFields": [
+    {
+      "name": "Region",
+      "key": "a5d712c31e21c0af0a75d54f6548b4eaca04f87a",
+      "id": 27
+    },
+    {
+      "name": "Property Ownership",
+      "key": "b4c5ee3f04498923c15122f390a15204219b1155",
+      "id": 28
+    },
+    {
+      "name": "Preferred Contact Method",
+      "key": "09ff8c665ab83553e58225e8e639927b499febf9",
+      "id": 29
+    },
+    {
+      "name": "How They Heard About Us",
+      "key": "2eee8eb11a9e50dbd6d253d99efdd7e9f42e4193",
+      "id": 30
+    }
+  ],
+  "labels": [
+    {
+      "name": "Hot",
+      "id": "b2c398df-f588-4c23-9428-9c04c20182d8",
+      "color": "red"
+    },
+    {
+      "name": "Warm",
+      "id": "7600d49f-0c56-425f-ba81-a4aa8b8e92ca",
+      "color": "yellow"
+    },
+    {
+      "name": "Cold",
+      "id": "50bd6ded-2184-4812-8afe-945a64df3654",
+      "color": "blue"
+    }
+  ],
+  "webhook": {
+    "id": 1583109,
+    "url": "https://kristjans-mac-mini.tail67cac1.ts.net/pd-webhook"
+  }
+}

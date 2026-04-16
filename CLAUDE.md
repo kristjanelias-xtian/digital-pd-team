@@ -31,8 +31,9 @@ Remove this section once Task 25 is verified passing.
 > - `~/git/openshell-tools/` — Shared bash scripts for OpenShell sandbox management (on PATH). See its `CLAUDE.md` for conventions and gotchas.
 > - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
 > - `~/git/digital-pd-team/` — This repo (zeno, lux, taro for Pipedrive).
+> - `~/git/pd-helpers/` — Shared Pipedrive data tooling (seed leads, wipe accounts, provision pipelines). Used by both this repo and `pipeagent`. Run via `pnpm dev:<cmd>` from that directory.
 >
-> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
+> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `kick-bot.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
 >
 > **Rule — where code belongs**: New scripts for OpenShell infrastructure (sandbox management, gateway recovery, Colima/Docker operations, backup/restore, deployment) must go in `~/git/openshell-tools/`, not in this repo's `scripts/` directory. This repo's `scripts/` is only for project-specific tooling (e.g. Pipedrive data operations). After adding a script to openshell-tools, document it in that repo's `README.md` and reference it in the CLAUDE.md files of both this project and `~/git/home-ai/`.
 >
@@ -41,7 +42,7 @@ Remove this section once Task 25 is verified passing.
 ## Architecture
 
 ```
-                     Pipedrive (xtian.pipedrive.com)
+                     Pipedrive (nordlight-digital-pd-team.pipedrive.com)
                               │
                               │ webhooks (v2 format)
                               ▼
@@ -64,15 +65,16 @@ Tailscale Funnel ──→ webhook-server (Express, port 3000)
 
 All bots communicate via "NordLight Sales" Telegram group.
 All bots read/write Pipedrive via REST API with individual tokens.
+All bots use Anthropic Claude Sonnet 4.6 for conversations, Ollama Qwen 3.5 9B for heartbeats.
 ```
 
 ## The Team
 
 | Bot | Role | Telegram | PD User ID |
 |-----|------|----------|------------|
-| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25475093 |
-| **Lux Bot** | SDR | @lux_pd_bot | 25475071 |
-| **Taro Bot** | Account Executive | @taro_pd_bot | 25475082 |
+| **Zeno Bot** | Sales Manager | @zeno_pd_bot | 25523746 |
+| **Lux Bot** | SDR | @lux_pd_bot | 25523713 |
+| **Taro Bot** | Account Executive | @taro_pd_bot | 25523724 |
 
 > API tokens, Telegram bot tokens, and other credentials are stored in `docs/pipedrive-ids.md` (gitignored) and each bot's `openclaw.json` (gitignored).
 
@@ -222,6 +224,9 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 | Restart everything + gateway | `restart-all.sh --gateway` | Yes (destroys sandboxes) | Yes** |
 | Wipe all PD data | `./scripts/wipe-pipedrive.sh` | No | Yes |
 | Wipe PD data + reset bots | `./scripts/wipe-pipedrive.sh --notify-bots` | No | Yes |
+| Seed a test lead | `pnpm dev:seed --target digital-pd-team` (from `~/git/pd-helpers`) | No | Yes |
+| Wipe seed data only | `pnpm dev:wipe --target digital-pd-team --confirm` (from `~/git/pd-helpers`) | No | Yes |
+| Provision pipeline/fields | `pnpm dev:setup --target digital-pd-team` (from `~/git/pd-helpers`) | No | Yes |
 
 \* Gateway restart is safe — workspace files persist on disk. `restore-bot.sh` (from openshell-tools) auto-backs up before restoring.
 
@@ -284,6 +289,37 @@ To delete all sales data (deals, leads, activities, notes, persons, organization
 
 The script uses the admin token, deletes in dependency order, handles batching and rate limits, and loops until the account is clean. Use `--notify-bots` to send a "fresh start" message to all 3 bots via the trigger relay.
 
+### Seeding and wiping with pd-helpers
+
+The `~/git/pd-helpers/` repo provides shared CLI tools for managing test data across Pipedrive accounts. All commands run from that directory via `pnpm dev:<cmd>`.
+
+```bash
+cd ~/git/pd-helpers
+
+# Seed one random lead from the 20-item Estonian company pool
+pnpm dev:seed --target digital-pd-team
+
+# Seed a specific lead by slug
+pnpm dev:seed --target digital-pd-team --name mari-tamm-pirita
+
+# List the pool and which leads are already in use
+pnpm dev:seed --target digital-pd-team --list
+
+# Preview what would be deleted (seed-pool items only)
+pnpm dev:wipe --target digital-pd-team --dry-run
+
+# Wipe seed-pool data only (safe — leaves non-seed data)
+pnpm dev:wipe --target digital-pd-team --confirm
+
+# Wipe everything (deals, leads, persons, orgs, notes, activities)
+pnpm dev:wipe --target digital-pd-team --full --confirm
+
+# Provision pipeline, stages, custom fields (idempotent)
+pnpm dev:setup --target digital-pd-team
+```
+
+Configuration is in `~/git/pd-helpers/.env` (needs `PD_DIGITAL_API_TOKEN` and `PD_DIGITAL_API_DOMAIN`).
+
 ## Operating the Bots
 
 ### Deploy skills (safe — no restart, no memory loss)
@@ -341,6 +377,25 @@ openclaw config get channels.telegram     # Check telegram config
 ### Update network policy live
 ```bash
 openshell policy set --policy bots/<bot>/policy.yaml <bot>
+```
+
+### Local model inference (Ollama)
+
+Heartbeats use local Ollama (Qwen 3.5 9B) via `inference.local` to save API costs.
+Conversations stay on Anthropic Claude Sonnet 4.6 (direct API, not through inference.local).
+
+The `restore-bot.sh` script auto-detects `ollama-local` in `openclaw.json` and sets up
+the gateway-level Ollama provider. No manual setup needed after a restore.
+
+For full details on the local model setup, thinking mode gotchas, and tested approaches,
+see `~/git/home-ai/docs/local-model-setup.md`.
+
+```bash
+# Verify inference.local points to Ollama
+openshell inference get
+
+# Manually set (normally done by restore-bot.sh)
+openshell inference set --provider ollama --model "qwen3.5:9b" --no-verify
 ```
 
 ### Webhook server
@@ -472,7 +527,7 @@ upgrade-openshell.sh --skip-backup
 - PD validates the webhook URL on creation — endpoint must be reachable
 
 ### Network Policy
-- Both `api.pipedrive.com` and `xtian.pipedrive.com` must be in policy.yaml
+- Both `api.pipedrive.com` and `nordlight-digital-pd-team.pipedrive.com` must be in policy.yaml
 - All HTTPS endpoints need `tls: skip`
 - Policies can be updated live with `openshell policy set`
 - Local services (on host) are reachable at `192.168.5.2` from inside sandboxes
@@ -484,8 +539,8 @@ upgrade-openshell.sh --skip-backup
 
 ## Pipedrive Instance
 
-- **URL**: xtian.pipedrive.com
-- **Pipeline**: NordLight Solar (ID: 3) with 7 stages
+- **URL**: nordlight-digital-pd-team.pipedrive.com
+- **Pipeline**: NordLight Solar (ID: 2) with 7 stages
 - **Admin token**: See `docs/pipedrive-ids.md` (gitignored)
 - **Webhook**: All events → `https://<your-tailscale-hostname>/pd-webhook`
 - See `docs/pipedrive-ids.md` for full ID reference (gitignored — create from template)
