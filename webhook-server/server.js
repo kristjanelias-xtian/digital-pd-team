@@ -416,6 +416,21 @@ app.post('/trigger', async (req, res) => {
   if (!GATEWAY_TOKEN) return res.status(503).json({ error: 'GATEWAY_TOKEN not configured' });
 
   console.log(`[${new Date().toISOString()}] trigger: ${from || '?'} → ${to}`);
+
+  // Immediate ack to the group so the team sees Taro is picking up
+  if (to === 'taro' && from === 'lux') {
+    const ackToken = BOT_TOKENS['taro'];
+    if (ackToken) {
+      const ackText = `Got it from Lux -- picking up now.`;
+      fetch(`https://api.telegram.org/bot${ackToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text: ackText }),
+      }).catch(() => {});
+      appendEventLog(LOG_DIR, { ts: new Date().toISOString(), kind: 'group_message', bot: 'taro', text: ackText, lines: 1 });
+    }
+  }
+
   // Fire-and-forget. The relay acks immediately; the target bot's response
   // will be posted to the group when it completes.
   dispatchToBot(to, message);
