@@ -32,7 +32,7 @@ Remove this section once Task 25 is verified passing.
 > - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
 > - `~/git/digital-pd-team/` — This repo (zeno, lux, taro for Pipedrive).
 >
-> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
+> **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `kick-bot.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
 >
 > **Rule — where code belongs**: New scripts for OpenShell infrastructure (sandbox management, gateway recovery, Colima/Docker operations, backup/restore, deployment) must go in `~/git/openshell-tools/`, not in this repo's `scripts/` directory. This repo's `scripts/` is only for project-specific tooling (e.g. Pipedrive data operations). After adding a script to openshell-tools, document it in that repo's `README.md` and reference it in the CLAUDE.md files of both this project and `~/git/home-ai/`.
 >
