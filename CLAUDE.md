@@ -31,6 +31,7 @@ Remove this section once Task 25 is verified passing.
 > - `~/git/openshell-tools/` — Shared bash scripts for OpenShell sandbox management (on PATH). See its `CLAUDE.md` for conventions and gotchas.
 > - `~/git/home-ai/` — Personal home assistants (alfred, luna) running on the same shared gateway.
 > - `~/git/digital-pd-team/` — This repo (zeno, lux, taro for Pipedrive).
+> - `~/git/pd-helpers/` — Shared Pipedrive data tooling (seed leads, wipe accounts, provision pipelines). Used by both this repo and `pipeagent`. Run via `pnpm dev:<cmd>` from that directory.
 >
 > **Shared tooling**: Common scripts (`backup-bot.sh`, `restore-bot.sh`, `restore-state.sh`, `deploy-skill.sh`, `kick-bot.sh`, `restart-all.sh`, `upgrade-openshell.sh`, `check-services.sh`) live in `~/git/openshell-tools/` and are on PATH. Commands are called without `./` prefix.
 >
@@ -223,6 +224,9 @@ Bots have two categories of files. Understanding this is critical for safe deplo
 | Restart everything + gateway | `restart-all.sh --gateway` | Yes (destroys sandboxes) | Yes** |
 | Wipe all PD data | `./scripts/wipe-pipedrive.sh` | No | Yes |
 | Wipe PD data + reset bots | `./scripts/wipe-pipedrive.sh --notify-bots` | No | Yes |
+| Seed a test lead | `pnpm dev:seed --target digital-pd-team` (from `~/git/pd-helpers`) | No | Yes |
+| Wipe seed data only | `pnpm dev:wipe --target digital-pd-team --confirm` (from `~/git/pd-helpers`) | No | Yes |
+| Provision pipeline/fields | `pnpm dev:setup --target digital-pd-team` (from `~/git/pd-helpers`) | No | Yes |
 
 \* Gateway restart is safe — workspace files persist on disk. `restore-bot.sh` (from openshell-tools) auto-backs up before restoring.
 
@@ -284,6 +288,37 @@ To delete all sales data (deals, leads, activities, notes, persons, organization
 ```
 
 The script uses the admin token, deletes in dependency order, handles batching and rate limits, and loops until the account is clean. Use `--notify-bots` to send a "fresh start" message to all 3 bots via the trigger relay.
+
+### Seeding and wiping with pd-helpers
+
+The `~/git/pd-helpers/` repo provides shared CLI tools for managing test data across Pipedrive accounts. All commands run from that directory via `pnpm dev:<cmd>`.
+
+```bash
+cd ~/git/pd-helpers
+
+# Seed one random lead from the 20-item Estonian company pool
+pnpm dev:seed --target digital-pd-team
+
+# Seed a specific lead by slug
+pnpm dev:seed --target digital-pd-team --name mari-tamm-pirita
+
+# List the pool and which leads are already in use
+pnpm dev:seed --target digital-pd-team --list
+
+# Preview what would be deleted (seed-pool items only)
+pnpm dev:wipe --target digital-pd-team --dry-run
+
+# Wipe seed-pool data only (safe — leaves non-seed data)
+pnpm dev:wipe --target digital-pd-team --confirm
+
+# Wipe everything (deals, leads, persons, orgs, notes, activities)
+pnpm dev:wipe --target digital-pd-team --full --confirm
+
+# Provision pipeline, stages, custom fields (idempotent)
+pnpm dev:setup --target digital-pd-team
+```
+
+Configuration is in `~/git/pd-helpers/.env` (needs `PD_DIGITAL_API_TOKEN` and `PD_DIGITAL_API_DOMAIN`).
 
 ## Operating the Bots
 
