@@ -263,19 +263,17 @@ async function postResponseToGroup(response, botName) {
       const lines = cleaned.split('\n');
       const nonEmpty = lines.filter((l) => l.trim().length > 0);
       // Always strip reasoning/thinking lines — they leak internal process
-      const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move)/i;
+      const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move|two |three |found |the (older|newer|first|second|other)|this (lead|deal|person)|running |calling |creating |updating |now |ok[, ]|alright)/i;
       const filtered = nonEmpty.filter((l) => !reasoningPatterns.test(l.trim()));
       if (filtered.length > 0 && filtered.length < nonEmpty.length) {
         console.log(`  → [${botName}] stripped ${nonEmpty.length - filtered.length} reasoning lines`);
         cleaned = filtered.join('\n');
       }
-      // After stripping, if still >1 line, keep only the best one
+      // After stripping reasoning, if still >6 lines, keep only the last 5
       const finalLines = cleaned.split('\n').filter((l) => l.trim().length > 0);
-      if (finalLines.length > 1) {
-        // Pick the last line >30 chars, or the longest line
-        const long = finalLines.filter((l) => l.trim().length > 30);
-        cleaned = long.length > 0 ? long[long.length - 1] : finalLines.reduce((a, b) => a.length >= b.length ? a : b);
-        console.log(`  → [${botName}] reduced ${finalLines.length}-line output to best line`);
+      if (finalLines.length > 6) {
+        cleaned = finalLines.slice(-5).join('\n');
+        console.log(`  → [${botName}] trimmed ${finalLines.length}-line output to last 5 lines`);
       }
       output = cleaned.trim();
       if (output.length === 0) output = null;
