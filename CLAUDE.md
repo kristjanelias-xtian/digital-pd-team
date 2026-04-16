@@ -64,6 +64,7 @@ Tailscale Funnel ──→ webhook-server (Express, port 3000)
 
 All bots communicate via "NordLight Sales" Telegram group.
 All bots read/write Pipedrive via REST API with individual tokens.
+All bots use Anthropic Claude Sonnet 4.6 for conversations, Ollama Qwen 3.5 9B for heartbeats.
 ```
 
 ## The Team
@@ -341,6 +342,25 @@ openclaw config get channels.telegram     # Check telegram config
 ### Update network policy live
 ```bash
 openshell policy set --policy bots/<bot>/policy.yaml <bot>
+```
+
+### Local model inference (Ollama)
+
+Heartbeats use local Ollama (Qwen 3.5 9B) via `inference.local` to save API costs.
+Conversations stay on Anthropic Claude Sonnet 4.6 (direct API, not through inference.local).
+
+The `restore-bot.sh` script auto-detects `ollama-local` in `openclaw.json` and sets up
+the gateway-level Ollama provider. No manual setup needed after a restore.
+
+For full details on the local model setup, thinking mode gotchas, and tested approaches,
+see `~/git/home-ai/docs/local-model-setup.md`.
+
+```bash
+# Verify inference.local points to Ollama
+openshell inference get
+
+# Manually set (normally done by restore-bot.sh)
+openshell inference set --provider ollama --model "qwen3.5:9b" --no-verify
 ```
 
 ### Webhook server
