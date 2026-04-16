@@ -258,15 +258,24 @@ async function postResponseToGroup(response, botName) {
         .replace(/^#{1,6}\s+/gm, '')              // # headers → plain
         .replace(/^\s*\|.*\|\s*$/gm, '')          // table rows → empty
         .replace(/^\s*\|[-: ]+\|\s*$/gm, '')      // table dividers → empty
-        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}]/gu, '') // emoji
+        .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '') // emoji (broad)
         .replace(/\n{3,}/g, '\n\n');              // collapse runs of blank lines
       const lines = cleaned.split('\n');
       const nonEmpty = lines.filter((l) => l.trim().length > 0);
-      if (nonEmpty.length > 8) {
-        // Too long — keep only the last non-empty line as the message.
-        // This is where Lux/Taro naturally put their summary sentence.
-        cleaned = nonEmpty[nonEmpty.length - 1];
-        console.log(`  → [${botName}] truncated ${nonEmpty.length}-line output to last line`);
+      // Always strip reasoning/thinking lines — they leak internal process
+      const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move)/i;
+      const filtered = nonEmpty.filter((l) => !reasoningPatterns.test(l.trim()));
+      if (filtered.length > 0 && filtered.length < nonEmpty.length) {
+        console.log(`  → [${botName}] stripped ${nonEmpty.length - filtered.length} reasoning lines`);
+        cleaned = filtered.join('\n');
+      }
+      // After stripping, if still >1 line, keep only the best one
+      const finalLines = cleaned.split('\n').filter((l) => l.trim().length > 0);
+      if (finalLines.length > 1) {
+        // Pick the last line >30 chars, or the longest line
+        const long = finalLines.filter((l) => l.trim().length > 30);
+        cleaned = long.length > 0 ? long[long.length - 1] : finalLines.reduce((a, b) => a.length >= b.length ? a : b);
+        console.log(`  → [${botName}] reduced ${finalLines.length}-line output to best line`);
       }
       output = cleaned.trim();
       if (output.length === 0) output = null;
@@ -357,6 +366,21 @@ app.post('/pd-webhook', async (req, res) => {
   }
   if (rolledUp.length > 0) {
     console.log(`[${entry.ts}]   rolled-up (key=${rollupKey}): ${rolledUp.join(',')}`);
+  }
+
+  // Send an immediate ack to the group so the team sees the bot is working.
+  // Only for added.lead and added.deal events (new work, not updates).
+  if (eventKey === 'added.lead' && dispatched.includes('lux')) {
+    const ackText = `New lead: ${normalized.label} -- on it.`;
+    const ackToken = BOT_TOKENS['lux'];
+    if (ackToken) {
+      fetch(`https://api.telegram.org/bot${ackToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: process.env.TELEGRAM_GROUP_ID, text: ackText }),
+      }).catch(() => {});
+      appendEventLog(LOG_DIR, { ts: new Date().toISOString(), kind: 'group_message', bot: 'lux', text: ackText, lines: 1 });
+    }
   }
 
   // Build a concise message for each remaining target. Dispatch is fire-and-forget —

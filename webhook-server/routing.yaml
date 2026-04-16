@@ -12,17 +12,14 @@ routes:
     to: lux
     skip_if_bot_creator: true
 
-  - event: added.person
-    to: lux
-    skip_if_bot_creator: true
+  # added.person removed -- fires alongside added.lead (~250ms apart)
+  # with a different rollup key, causing parallel Lux sessions.
 
   - event: updated.person
     to: lux
     skip_if_bot_creator: true
 
-  - event: added.organization
-    to: lux
-    skip_if_bot_creator: true
+  # added.organization removed -- same reason as added.person above.
 
   - event: updated.organization
     to: lux
