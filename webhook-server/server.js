@@ -246,13 +246,12 @@ async function postResponseToGroup(response, botName) {
       if (SENTINELS.includes(trimmed) || trimmed.length === 0) output = null;
     }
 
-    // Server-side enforcement of THE HARD LIMIT (rulebook rule 0): group
-    // messages must be ≤ 8 lines, plain prose, no emoji/bold/markdown tables.
-    // The rulebook tells bots this, but LLMs drift on verbose reasoning
-    // sessions. If the bot produces a compliant summary line at the end of a
-    // wall of thinking, we keep only that line.
+    // Server-side sanitizer for group messages.
+    // Toggle with SANITIZE env var: "on" = strip reasoning + enforce line limits,
+    // "off" (default) = only strip markdown/emoji, pass everything through.
+    const sanitize = (process.env.SANITIZE || 'off').toLowerCase() === 'on';
     if (output) {
-      // Strip bold markers, markdown headers (inline), and table pipes.
+      // Always strip markdown formatting (bold, headers, tables) and emoji
       let cleaned = output
         .replace(/\*\*(.+?)\*\*/g, '$1')          // **bold** → bold
         .replace(/^#{1,6}\s+/gm, '')              // # headers → plain
@@ -260,21 +259,25 @@ async function postResponseToGroup(response, botName) {
         .replace(/^\s*\|[-: ]+\|\s*$/gm, '')      // table dividers → empty
         .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '') // emoji (broad)
         .replace(/\n{3,}/g, '\n\n');              // collapse runs of blank lines
-      const lines = cleaned.split('\n');
-      const nonEmpty = lines.filter((l) => l.trim().length > 0);
-      // Always strip reasoning/thinking lines — they leak internal process
-      const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move|two |three |found |the (older|newer|first|second|other)|this (lead|deal|person)|running |calling |creating |updating |now |ok[, ]|alright)/i;
-      const filtered = nonEmpty.filter((l) => !reasoningPatterns.test(l.trim()));
-      if (filtered.length > 0 && filtered.length < nonEmpty.length) {
-        console.log(`  → [${botName}] stripped ${nonEmpty.length - filtered.length} reasoning lines`);
-        cleaned = filtered.join('\n');
+
+      if (sanitize) {
+        const lines = cleaned.split('\n');
+        const nonEmpty = lines.filter((l) => l.trim().length > 0);
+        // Strip reasoning/thinking lines
+        const reasoningPatterns = /^(let me|checking|no prior|reading|scoring|looking|pulling|searching|done|here'?s|i('ll| will| need| just)|new (person|lead|deal)|next move|two |three |found |the (older|newer|first|second|other)|this (lead|deal|person)|running |calling |creating |updating |now |ok[, ]|alright)/i;
+        const filtered = nonEmpty.filter((l) => !reasoningPatterns.test(l.trim()));
+        if (filtered.length > 0 && filtered.length < nonEmpty.length) {
+          console.log(`  → [${botName}] stripped ${nonEmpty.length - filtered.length} reasoning lines`);
+          cleaned = filtered.join('\n');
+        }
+        // After stripping reasoning, if still >6 lines, keep only the last 5
+        const finalLines = cleaned.split('\n').filter((l) => l.trim().length > 0);
+        if (finalLines.length > 6) {
+          cleaned = finalLines.slice(-5).join('\n');
+          console.log(`  → [${botName}] trimmed ${finalLines.length}-line output to last 5 lines`);
+        }
       }
-      // After stripping reasoning, if still >6 lines, keep only the last 5
-      const finalLines = cleaned.split('\n').filter((l) => l.trim().length > 0);
-      if (finalLines.length > 6) {
-        cleaned = finalLines.slice(-5).join('\n');
-        console.log(`  → [${botName}] trimmed ${finalLines.length}-line output to last 5 lines`);
-      }
+
       output = cleaned.trim();
       if (output.length === 0) output = null;
     }
