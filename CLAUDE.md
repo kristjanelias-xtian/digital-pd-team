@@ -37,7 +37,7 @@ Remove this section once Task 25 is verified passing.
 >
 > **Rule — where code belongs**: New scripts for OpenShell infrastructure (sandbox management, gateway recovery, Colima/Docker operations, backup/restore, deployment) must go in `~/git/openshell-tools/`, not in this repo's `scripts/` directory. This repo's `scripts/` is only for project-specific tooling (e.g. Pipedrive data operations). After adding a script to openshell-tools, document it in that repo's `README.md` and reference it in the CLAUDE.md files of both this project and `~/git/home-ai/`.
 >
-> **Rule — shared gateway**: Both this project and `~/git/home-ai/` share a single OpenShell gateway. `restart-all.sh --gateway` and `upgrade-openshell.sh` destroy and recreate the shared gateway, which kills ALL sandboxes from both projects. After such an operation, you must restore bots from BOTH repos (run `restart-all.sh --skip-backup` from the second repo — no `--gateway` flag).
+> **Rule — shared gateway**: Both this project and `~/git/home-ai/` share a single OpenShell gateway (the brew service on this Mac). Any operation that restarts the gateway service or deletes/recreates sandboxes (e.g. `upgrade-openshell.sh`, or `restart-all.sh --gateway`) affects sandboxes from BOTH projects. After such an operation, restore bots from BOTH repos (run `restart-all.sh --skip-backup` from the second repo). Note: since OpenShell 0.0.37+ a routine gateway-service restart no longer destroys sandboxes (they are Docker containers under the `docker` driver, independent of the gateway process); only `openshell sandbox delete` or a Colima/VM rebuild removes them. See the Colima VM Crash Recovery section for the new brew-service gateway model.
 
 ## Architecture
 
@@ -442,32 +442,37 @@ The Colima VM (Virtualization.framework on Apple Silicon) can silently die from 
 
 - The Lima host agent keeps running as a zombie (stale pid/socket files)
 - Docker socket exists but daemon doesn't respond
-- `openshell gateway start` fails with "Docker daemon is not responding"
+- The OpenShell gateway service errors with "no compute driver" / "Docker daemon is not responding"
 - `colima start` refuses because it thinks the VM is already running
 
-**Diagnosis:** `check-services.sh` detects zombie Colima, stale Docker, and broken SSH tunnels.
+**Diagnosis:** `check-services.sh` detects zombie Colima, stale Docker, and gateway health.
 
-**Recovery (OpenShell 0.0.22+):** Try the minimal fix first — OpenShell 0.0.22 added persistent SSH handshake secrets (#488) and sandbox state persistence across stop/start cycles (#739), so the gateway should resume cleanly after a Colima restart:
+**Recovery (OpenShell 0.0.67+, docker driver):** OpenShell 0.0.37+ replaced the
+old Docker/k3s-container gateway with a native Homebrew service using pluggable
+compute drivers (`~/.config/openshell/gateway.env` selects `docker` against
+Colima). The gateway is a host process; sandbox containers persist in Docker
+independently, so after a Colima restart the gateway service just needs a kick:
 
 ```bash
 # Step 1: Fix Colima (if VM is zombie)
 colima stop --force && colima start
 
-# Step 2: Start the gateway container (if not running)
-docker start openshell-cluster-openshell   # or: openshell gateway start --name openshell
+# Step 2: Restart the OpenShell gateway service (it can't see Docker until Colima is back)
+brew services restart openshell
+#   If it still errors "no compute driver", confirm ~/.config/openshell/gateway.env
+#   has OPENSHELL_DRIVERS=docker and DOCKER_HOST pointing at the Colima socket, then
+#   launchctl kickstart -k gui/$(id -u)/homebrew.mxcl.openshell
 
-# Step 3: Verify SSH tunnels with check-services.sh
+# Step 3: Verify gateway + driver, then kick bots
+openshell status && openshell doctor check
+kick-bot.sh all
 check-services.sh
 ```
 
-**Recovery (fallback — if SSH tunnels are still broken):** Pre-0.0.22 behavior was that k3s TLS secrets became stale and required a full gateway destroy/recreate. If the minimal fix doesn't work on your version, fall back to:
-
-```bash
-# Backups will fail if SSH is broken — use --skip-backup with existing backups
-restart-all.sh --gateway --skip-backup
-# or, to also upgrade OpenShell:
-upgrade-openshell.sh --skip-backup
-```
+**Recovery (fallback — full rebuild):** If sandboxes are lost or the gateway
+won't come back, recreate from scratch (backups are the recovery basis):
+`openshell sandbox delete --all`, then `restore-bot.sh` + `restore-state.sh` for
+each bot.
 
 ## Gotchas & Learnings
 
@@ -500,11 +505,11 @@ upgrade-openshell.sh --skip-backup
 - `restore-bot.sh` handles this automatically (kills old gateway before starting new one)
 
 ### Gateway Restart (OpenShell Gateway, Host Level)
-- `openshell gateway stop` + `openshell gateway start` — sometimes `start` doesn't actually restart after `stop`
-- If `openshell status` shows "Connection refused" after stop+start: `openshell gateway destroy` + `openshell gateway start --name openshell`
-- **Destroying the gateway destroys all sandboxes.** Always `backup-bot.sh` all bots first.
-- After recreate: `restore-bot.sh` for each bot, then `restore-state.sh` to bring back memory (both from openshell-tools, on PATH).
-- Full cycle: `backup-bot.sh` all → `gateway destroy` → `gateway start` → `restore-bot.sh` each → `restore-state.sh` each
+- OpenShell 0.0.37+: the gateway is a Homebrew service, NOT a container. `openshell gateway start/stop/destroy` are GONE — `openshell gateway` now only does add/remove/login/logout/select/info/list.
+- Restart the gateway: `brew services restart openshell` (or `launchctl kickstart -k gui/$(id -u)/homebrew.mxcl.openshell`). Verify with `openshell status` (Connected) + `openshell doctor check`.
+- A service restart does **NOT** destroy sandboxes (they are Docker containers under the `docker` driver, independent of the gateway process). Only `openshell sandbox delete` or a Colima/VM rebuild removes them.
+- Compute driver config: `~/.config/openshell/gateway.env` (`OPENSHELL_DRIVERS=docker` + Colima `DOCKER_HOST`). If the service errors with "no compute driver", this file is missing/wrong.
+- Full rebuild (only if sandboxes are lost): `backup-bot.sh` all → `openshell sandbox delete --all` → `restore-bot.sh` each → `restore-state.sh` each.
 
 ### Sandbox Networking & DNS
 - Sandboxes are **network-isolated** — all HTTP goes through a proxy at `10.200.0.1:3128`
